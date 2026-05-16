@@ -68,7 +68,7 @@ func NewRawSocket(addr string) (int, error) {
 	var sockaddr [4]byte
 	copy(sockaddr[:], ip)
 	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Port: port, Addr: sockaddr}); err != nil {
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		return -1, fmt.Errorf("bind failed: %v", err)
 	}
 	return fd, nil

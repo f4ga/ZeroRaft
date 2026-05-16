@@ -12,25 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: "2"
+# Этап сборки
+FROM golang:1.26-alpine AS builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /zeroraft ./cmd/zeroraft
 
-linters:
-  enable:
-    - govet
-    - staticcheck
-    - unused
-    - errcheck
-    - ineffassign
-    - misspell
-    - gocritic
-
-formatters:
-  enable:
-    - gofmt
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gocritic
+# Финальный образ
+FROM alpine:latest
+COPY --from=builder /zeroraft /usr/local/bin/zeroraft
+ENTRYPOINT ["/usr/local/bin/zeroraft"]

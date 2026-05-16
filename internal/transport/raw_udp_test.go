@@ -29,7 +29,7 @@ func TestNewRawSocket(t *testing.T) {
 	if fd <= 0 {
 		t.Errorf("expected fd > 0, got %d", fd)
 	}
-	CloseSocket(fd)
+	_ = CloseSocket(fd)
 }
 
 func TestNewRawSocketInvalidAddr(t *testing.T) {
@@ -45,13 +45,13 @@ func TestSendAndReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create socket 1: %v", err)
 	}
-	defer CloseSocket(fd1)
+	defer func() { _ = CloseSocket(fd1) }()
 
 	fd2, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 2: %v", err)
 	}
-	defer CloseSocket(fd2)
+	defer func() { _ = CloseSocket(fd2) }()
 
 	// Get address of fd2
 	addr2, err := getSockAddr(fd2)
@@ -95,7 +95,7 @@ func TestSendToClosedSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
 	}
-	CloseSocket(fd)
+	_ = CloseSocket(fd)
 
 	// Try to send to closed socket
 	addr := &syscall.SockaddrInet4{Port: 1234, Addr: [4]byte{127, 0, 0, 1}}
@@ -110,7 +110,7 @@ func TestRecvFromWithCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
 	}
-	defer CloseSocket(fd)
+	defer func() { _ = CloseSocket(fd) }()
 
 	// Get socket address
 	addr, err := getSockAddr(fd)
@@ -135,7 +135,7 @@ func TestRecvFromWithCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sender socket: %v", err)
 	}
-	defer CloseSocket(senderFd)
+	defer func() { _ = CloseSocket(senderFd) }()
 
 	msg := []byte("ping")
 	err = SendTo(senderFd, msg, addr)
@@ -161,13 +161,13 @@ func TestConcurrentSendReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create socket 1: %v", err)
 	}
-	defer CloseSocket(fd1)
+	defer func() { _ = CloseSocket(fd1) }()
 
 	fd2, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 2: %v", err)
 	}
-	defer CloseSocket(fd2)
+	defer func() { _ = CloseSocket(fd2) }()
 
 	addr2, err := getSockAddr(fd2)
 	if err != nil {
