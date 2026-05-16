@@ -1,57 +1,162 @@
 # ZeroRaft
 
-Учебно-демонстрационная реализация протокола Raft на Go без использования стандартной библиотеки `net`.
+<div align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,18,24,27,30&height=200&section=header&text=ZeroRaft&fontSize=70&fontAlignY=40" />
+  <br />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=1&height=60&text=🔥%20Raft%20on%20raw%20sockets%20–%20no%20net%2C%20no%20magic%2C%20only%20syscall%20and%20json&fontSize=20&fontAlignY=50" />
+  <br/><br/>
 
-## Цель проекта
+  [![CI](https://github.com/f4ga/ZeroRaft/actions/workflows/ci.yml/badge.svg)](https://github.com/f4ga/ZeroRaft/actions/workflows/ci.yml)
+  [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go)](https://go.dev/)
+  [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-- Полная реализация Raft (выборы, лог, персистентность, снапшоты).
-- Транспорт на сырых сокетах (`syscall.Socket`, `syscall.Bind`, `syscall.Recvfrom`, `syscall.Sendto`).
-- Собственный кодек: 4-байтовый префикс длины (big-endian) + JSON.
-- Полный CI/CD (линтеры, тесты с `-race`, Docker Compose на 3 узла).
+  <div align="center">
+    <a href="README.md"><img src="https://img.shields.io/badge/🇬🇧-English-blue?style=for-the-badge" alt="English"></a>
+    &nbsp;&nbsp;
+    <a href="README_RU.md"><img src="https://img.shields.io/badge/🇷🇺-Русский-red?style=for-the-badge" alt="Русский"></a>
+  </div>
+</div>
 
-## Требования
+---
 
-- Go 1.26.0 или выше
-- Docker и Docker Compose (для запуска кластера)
-- Make (опционально, для удобного запуска команд)
+## 📖 What is ZeroRaft?
 
-## Команды
+**ZeroRaft** is a from‑scratch implementation of the Raft consensus protocol.  
+The catch: **no ready‑made network libraries**. No `net` package. Just `syscall.Socket`, `bind`, `recvfrom`, `sendto`. No existing Raft frameworks. No ORM, no message brokers.
 
-make build — сборка бинарника в bin/zeroraft
+The goal is not to clone etcd — it's to **feel** how a distributed system works at the lowest level: from a UDP datagram to profiling latencies.
 
-make test — запуск тестов с race-детектором
+---
 
-make lint — запуск golangci-lint
+## 🧩 Current status
 
-make docker-up — сборка Docker-образа и запуск кластера из трёх узлов
+| Component | Status | What’s done |
+|-----------|--------|--------------|
+| **Project scaffold** | ✅ | `Makefile`, `go.mod`, CI (GitHub Actions), linting, multi‑stage Docker, `docker-compose` for 3 nodes |
+| **Raw UDP transport** | ✅ | `syscall.Socket`, `bind`, `recvfrom`, `sendto`. No `net`. Tests with real sockets, race detector enabled |
+| **Codec (length+JSON)** | 🔜 | 4‑byte big‑endian prefix + JSON. `RequestVote`, `AppendEntries`, type detection without full parsing |
+| **Leader election** | 🔜 | Follower/Candidate/Leader, random timeouts (150–300 ms), `RequestVote` logic, heartbeat via empty `AppendEntries` |
+| **Persistence** | 🔜 | `currentTerm` and `votedFor` saved atomically (write‑temp‑file + rename). Restore after restart |
+| **Log replication + state machine** | 🔜 | `LogEntry`, `RaftLog` (append/truncate). `AppendEntries` with conflict resolution. In‑memory `map[string]string` |
+| **CLI + command forwarding** | 🔜 | Interactive readline. `/status`, `/set`, `/get`, `/leader`, `/chaos`. Follower forwards writes to leader |
+| **Chaos, pcap, pprof** | 🔜 | Packet loss simulation (`/chaos loss=0.3`). Raw UDP capture to PCAP (Wireshark). Built‑in `pprof` (CPU, memory) |
+| **Docker orchestration + healthcheck** | 🔜 | `docker-compose up` brings 3 nodes with persistent volumes. Healthcheck. Auto‑recovery on container kill |
+| **Docs + benchmarks + Habr article** | 🔜 | Full `README`, benchmark scripts, draft for Habr (English/Russian) |
 
-make docker-down — остановка кластера и удаление контейнеров
+> ✅ = done, 🔜 = in progress (next in line)
 
-## Архитектура
+---
 
-### Структура проекта
+## ⚡ Architecture
 
-cmd/zeroraft/ — точка входа (CLI и запуск Raft-узла)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         ZeroRaft Node                            │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌────────────┐    ┌────────────┐    ┌────────────────────┐     │
+│  │    CLI     │    │  Raft FSM  │    │    Persistence     │     │
+│  │ (readline) │◄──►│ (election, │◄──►│ (term + votedFor)  │     │
+│  └────────────┘    │   log, SM) │    └────────────────────┘     │
+│                    └─────┬──────┘                                │
+│                          │                                       │
+│                          ▼                                       │
+│         ┌────────────────────────────────┐                     │
+│         │         Transport Layer        │                     │
+│         │  raw UDP (syscall)             │                     │
+│         │  codec (length+JSON)           │                     │
+│         │  chaos (loss simulation)       │                     │
+│         │  pcap (Wireshark)              │                     │
+│         └────────────────────────────────┘                     │
+│                          │                                       │
+│                          ▼                                       │
+│                    ┌─────────┐                                 │
+│                    │  pprof  │ (port 6060)                     │
+│                    └─────────┘                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-internal/transport/ — транспортный слой (raw UDP на syscall)
+Every RPC (`RequestVote`, `AppendEntries`) goes through `syscall.Sendto`. Replies come via `syscall.Recvfrom`. No goroutine pools — just manual management.
 
-internal/raft/ — ядро Raft (состояния, выборы, лог, персистентность)
+---
 
-internal/client/ — CLI-клиент (readline, отправка команд)
+## 🛠️ Quick start
 
-test/integration/ — интеграционные тесты (кластер из 3 узлов)
+### Requirements
+- Go 1.23+
+- Docker (optional)
 
-### Протокол
+### Build locally
 
-Все сообщения передаются в формате: [4 байта длины big-endian][JSON].
+```bash
+git clone https://github.com/f4ga/ZeroRaft.git
+cd ZeroRaft
+make build
+```
 
-Типы RPC:
-- RequestVote / RequestVoteResponse
-- AppendEntries / AppendEntriesResponse
+### Run a single node (debug)
 
-### Сценарии
+```bash
+./bin/zeroraft --id=1 --addr=127.0.0.1:8001 --peers=127.0.0.1:8002,127.0.0.1:8003 --data-dir=./data
+```
 
-1. Выборы: три узла стартуют → один становится Candidate → получает большинство голосов → становится Leader, рассылает heartbeat.
-2. Репликация: клиент выполняет /set → лидер добавляет в лог, рассылает AppendEntries, дожидается большинства, коммитит.
-3. Падение лидера: kill -9 → новый лидер появляется в течение ≤ 500 мс.
-4. Chaos: эмуляция потерь пакетов, кластер продолжает работать.
+### 3‑node cluster with Docker
+
+```bash
+make docker-up
+# attach to any node:
+docker exec -it zeroraft_node1_1 /zeroraft --cli
+```
+
+### CLI commands
+
+| Command | Description |
+|---------|-------------|
+| `/status` | node state, term, commitIndex, leader address |
+| `/set key value` | write to cluster (auto‑forward to leader) |
+| `/get key` | read from local state machine |
+| `/leader` | show current leader ID + address |
+| `/chaos loss=0.3` | set packet loss probability (0..1) |
+| `/exit` | leave CLI |
+
+---
+
+## 📊 Expected benchmarks (after completion)
+
+| Mode | Throughput (cmds/sec) | p99 latency (ms) |
+|------|------------------------|------------------|
+| `net.UDPConn` | ~800 | 1.2 |
+| raw syscall | ~850 | 1.1 |
+| raw + 30% loss | ~550 | 3.5 |
+
+> Real numbers will be published after benchmarks.
+
+---
+
+## 🧠 ZeroRaft vs etcd
+
+| Aspect | ZeroRaft | etcd |
+|--------|----------|------|
+| Internal visibility | 🔥 Full control, everything is open | Black box |
+| Network stack | Custom `syscall` | `net` + `grpc` |
+| Code size | ~5k lines (self‑contained) | ~50k lines core |
+| Educational value | 🚀 Maximum | Low |
+| Production‑ready | ❌ (learning project) | ✅ |
+
+ZeroRaft is not a production‑grade etcd replacement. It exists to **teach**.
+
+---
+
+## 📄 License
+
+ZeroRaft is distributed under the **Apache License 2.0**.  
+See [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+  <i>Solid as stone. Light as ash.</i>
+  <br/><br/>
+  <a href="https://github.com/f4ga/ZeroRaft">github.com/f4ga/ZeroRaft</a>
+  <br/><br/>
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,18,24,27,30&height=120&section=footer" />
+</div>
