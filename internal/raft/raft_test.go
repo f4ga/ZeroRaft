@@ -45,7 +45,8 @@ func (m *mockSend) GetSent() []interface{} {
 func TestInitialState(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(1, peers, mock.Send)
+	node := NewRaftNode(1, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	if node.GetState() != Follower {
@@ -63,7 +64,8 @@ func TestInitialState(t *testing.T) {
 func TestStartElection(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(1, peers, mock.Send)
+	node := NewRaftNode(1, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	node.startElection()
@@ -83,7 +85,8 @@ func TestStartElection(t *testing.T) {
 func TestRequestVoteGrant(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(2, peers, mock.Send)
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	args := transport.RequestVote{
@@ -105,7 +108,8 @@ func TestRequestVoteGrant(t *testing.T) {
 func TestRequestVoteDenyAlreadyVoted(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(2, peers, mock.Send)
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	// First vote
@@ -125,7 +129,8 @@ func TestRequestVoteDenyAlreadyVoted(t *testing.T) {
 func TestRequestVoteDenyStaleTerm(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(2, peers, mock.Send)
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	// Manually set higher term
@@ -145,7 +150,8 @@ func TestRequestVoteDenyStaleTerm(t *testing.T) {
 func TestRequestVoteHigherTermUpdatesTerm(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(2, peers, mock.Send)
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	args := transport.RequestVote{Term: 5, CandidateID: 1}
@@ -163,7 +169,8 @@ func TestRequestVoteHigherTermUpdatesTerm(t *testing.T) {
 func TestHeartbeatResetsElection(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(2, peers, mock.Send)
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	// Send heartbeat
@@ -178,7 +185,8 @@ func TestHeartbeatResetsElection(t *testing.T) {
 func TestHeartbeatUpdatesTerm(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(2, peers, mock.Send)
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	args := transport.AppendEntries{Term: 5, LeaderID: 1}
@@ -196,7 +204,8 @@ func TestHeartbeatUpdatesTerm(t *testing.T) {
 func TestHeartbeatStaleTermIgnored(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(2, peers, mock.Send)
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	node.mu.Lock()
@@ -215,7 +224,8 @@ func TestHeartbeatStaleTermIgnored(t *testing.T) {
 func TestLeaderID(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	mock := &mockSend{}
-	node := NewRaftNode(2, peers, mock.Send)
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	// Initially no leader
@@ -236,7 +246,8 @@ func TestLeaderID(t *testing.T) {
 func TestBecomeLeader(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2", 3: "addr3"}
 	mock := &mockSend{}
-	node := NewRaftNode(1, peers, mock.Send)
+	node := NewRaftNode(1, peers, t.TempDir(), mock.Send)
+	node.Start()
 	defer node.Stop()
 
 	// Start election
@@ -250,5 +261,136 @@ func TestBecomeLeader(t *testing.T) {
 
 	if node.GetState() != Leader {
 		t.Errorf("expected Leader, got %v", node.GetState())
+	}
+}
+
+// TestAppendEntriesWithEntries tests AppendEntries with log entries.
+func TestAppendEntriesWithEntries(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	mock := &mockSend{}
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
+	defer node.Stop()
+
+	args := transport.AppendEntries{
+		Type:         "AppendEntries",
+		Term:         1,
+		LeaderID:     1,
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+		Entries: []transport.LogEntry{
+			{Index: 1, Term: 1, Command: "set foo bar"},
+		},
+		LeaderCommit: 0,
+	}
+	resp := node.handleAppendEntries(args)
+	if !resp.Success {
+		t.Error("expected success=true")
+	}
+	if node.log.LastIndex() != 1 {
+		t.Errorf("expected last index 1, got %d", node.log.LastIndex())
+	}
+}
+
+// TestAppendEntriesConflict tests conflict resolution.
+func TestAppendEntriesConflict(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	mock := &mockSend{}
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
+	defer node.Stop()
+
+	// Add conflicting entries
+	node.log.Append(LogEntry{Index: 1, Term: 1, Command: "old"})
+	node.log.Append(LogEntry{Index: 2, Term: 1, Command: "old2"})
+
+	// Leader sends entries with different term at index 1
+	args := transport.AppendEntries{
+		Type:         "AppendEntries",
+		Term:         2,
+		LeaderID:     1,
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+		Entries: []transport.LogEntry{
+			{Index: 1, Term: 2, Command: "new"},
+		},
+		LeaderCommit: 0,
+	}
+	resp := node.handleAppendEntries(args)
+	if !resp.Success {
+		t.Error("expected success=true")
+	}
+	if node.log.Len() != 2 { // sentinel + 1 entry
+		t.Errorf("expected 2 entries after conflict, got %d", node.log.Len())
+	}
+	entry, _ := node.log.Get(1)
+	if entry.Term != 2 {
+		t.Errorf("expected term 2 after overwrite, got %d", entry.Term)
+	}
+}
+
+// TestCommitIndexUpdate tests that commitIndex is updated.
+func TestCommitIndexUpdate(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	mock := &mockSend{}
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
+	defer node.Stop()
+
+	// Append entries and commit
+	args := transport.AppendEntries{
+		Type:         "AppendEntries",
+		Term:         1,
+		LeaderID:     1,
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+		Entries: []transport.LogEntry{
+			{Index: 1, Term: 1, Command: "set x 1"},
+		},
+		LeaderCommit: 1,
+	}
+	node.handleAppendEntries(args)
+	if node.commitIndex != 1 {
+		t.Errorf("expected commitIndex 1, got %d", node.commitIndex)
+	}
+}
+
+// TestSubmitCommand tests that leader accepts commands.
+func TestSubmitCommand(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	mock := &mockSend{}
+	node := NewRaftNode(1, peers, t.TempDir(), mock.Send)
+	node.Start()
+	defer node.Stop()
+
+	// Become leader
+	node.startElection()
+	node.handleResponseVote(2, transport.RequestVoteResponse{VoteGranted: true})
+
+	idx, err := node.Submit("set foo bar")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+	if idx != 1 {
+		t.Errorf("expected index 1, got %d", idx)
+	}
+
+	entry, ok := node.log.Get(1)
+	if !ok || entry.Command != "set foo bar" {
+		t.Errorf("log entry mismatch: %+v", entry)
+	}
+}
+
+// TestSubmitNotLeader tests that follower rejects commands.
+func TestSubmitNotLeader(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	mock := &mockSend{}
+	node := NewRaftNode(2, peers, t.TempDir(), mock.Send)
+	node.Start()
+	defer node.Stop()
+
+	_, err := node.Submit("set foo bar")
+	if err == nil {
+		t.Error("expected error for non-leader submit")
 	}
 }
