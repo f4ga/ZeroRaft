@@ -62,6 +62,16 @@ type AppendEntriesResponse struct {
 	Success bool   `json:"success"`
 }
 
+// Constants for length prefix size
+const (
+	lengthPrefixSize = 4 // size of the length prefix in bytes
+)
+
+var (
+	ErrInsufficientData = errors.New("insufficient data for message")
+	ErrLengthMismatch   = errors.New("declared length does not match actual data")
+)
+
 // Encode serializes msg into JSON, prepends 4-byte length prefix (big-endian).
 func Encode(msg interface{}) ([]byte, error) {
 	jsonData, err := json.Marshal(msg)
@@ -71,9 +81,9 @@ func Encode(msg interface{}) ([]byte, error) {
 
 	// 4-byte length prefix (big-endian)
 	length := uint32(len(jsonData))
-	buf := make([]byte, 4+len(jsonData))
-	binary.BigEndian.PutUint32(buf[:4], length)
-	copy(buf[4:], jsonData)
+	buf := make([]byte, lengthPrefixSize+len(jsonData))
+	binary.BigEndian.PutUint32(buf[:lengthPrefixSize], length)
+	copy(buf[lengthPrefixSize:], jsonData)
 
 	return buf, nil
 }
@@ -81,16 +91,18 @@ func Encode(msg interface{}) ([]byte, error) {
 // Decode takes raw data (received from UDP), extracts length prefix, parses JSON.
 // Returns the appropriate message type based on the "type" field.
 func Decode(data []byte) (interface{}, error) {
-	if len(data) < 4 {
-		return nil, errors.New("data too short for length prefix")
+	if len(data) < lengthPrefixSize {
+		return nil, fmt.Errorf("%w: expected at least %d bytes, got %d", ErrInsufficientData, lengthPrefixSize, len(data))
 	}
 
-	length := binary.BigEndian.Uint32(data[:4])
-	if int(length) > len(data)-4 {
-		return nil, errors.New("length prefix exceeds data size")
+	declaredLen := binary.BigEndian.Uint32(data[:lengthPrefixSize])
+
+	// Check if the declared length is plausible and fits within the received data.
+	if int(declaredLen) > len(data)-lengthPrefixSize {
+		return nil, fmt.Errorf("%w: declared %d bytes, but only %d available after prefix", ErrLengthMismatch, declaredLen, len(data)-lengthPrefixSize)
 	}
 
-	jsonData := data[4 : 4+length]
+	jsonData := data[lengthPrefixSize : lengthPrefixSize+declaredLen]
 
 	// First, parse just the "type" field to know which struct to unmarshal into.
 	var typeOnly struct {
@@ -98,6 +110,10 @@ func Decode(data []byte) (interface{}, error) {
 	}
 	if err := json.Unmarshal(jsonData, &typeOnly); err != nil {
 		return nil, fmt.Errorf("unmarshal type field: %w", err)
+	}
+
+	if typeOnly.Type == "" {
+		return nil, fmt.Errorf("%w: message has missing 'type' field", ErrLengthMismatch) // Using ErrLengthMismatch as a general error for malformed messages
 	}
 
 	// Now unmarshal into the appropriate struct.
@@ -133,16 +149,18 @@ func Decode(data []byte) (interface{}, error) {
 
 // GetMessageType quickly determines the message type without full parsing.
 func GetMessageType(data []byte) (string, error) {
-	if len(data) < 4 {
-		return "", errors.New("data too short for length prefix")
+	if len(data) < lengthPrefixSize {
+		return "", fmt.Errorf("%w: expected at least %d bytes, got %d", ErrInsufficientData, lengthPrefixSize, len(data))
 	}
 
-	length := binary.BigEndian.Uint32(data[:4])
-	if int(length) > len(data)-4 {
-		return "", errors.New("length prefix exceeds data size")
+	length := binary.BigEndian.Uint32(data[:lengthPrefixSize])
+
+	// Check if the declared length is plausible and fits within the received data.
+	if int(length) > len(data)-lengthPrefixSize {
+		return "", fmt.Errorf("%w: declared %d bytes, but only %d available after prefix", ErrLengthMismatch, length, len(data)-lengthPrefixSize)
 	}
 
-	jsonData := data[4 : 4+length]
+	jsonData := data[lengthPrefixSize : lengthPrefixSize+length]
 
 	var typeOnly struct {
 		Type string `json:"type"`
@@ -151,8 +169,9 @@ func GetMessageType(data []byte) (string, error) {
 		return "", fmt.Errorf("unmarshal type field: %w", err)
 	}
 
+	// If the type field is missing or empty, return an error.
 	if typeOnly.Type == "" {
-		return "", errors.New("missing type field")
+		return "", fmt.Errorf("%w: missing or empty 'type' field in message", ErrLengthMismatch)
 	}
 
 	return typeOnly.Type, nil

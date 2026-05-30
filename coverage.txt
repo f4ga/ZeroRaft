@@ -1,0 +1,3 @@
+mode: atomic
+zeroraft/internal/raft/raft.go:26.44,31.2 1 0
+zeroraft/internal/raft/raft.go:34.30,36.2 1 0

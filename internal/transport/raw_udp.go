@@ -22,6 +22,11 @@ import (
 	"syscall"
 )
 
+// Constants for buffer size and length prefix
+const (
+	udpBufferSize = 65535 // maximum UDP datagram size
+)
+
 // RawUDP представляет сырой UDP-сокет для Raft-коммуникаций.
 type RawUDP struct{}
 
@@ -46,11 +51,11 @@ func (r *RawUDP) Receive() ([]byte, string, error) {
 func NewRawSocket(addr string) (int, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
-		return -1, fmt.Errorf("invalid address %q: %v", addr, err)
+		return -1, fmt.Errorf("invalid address %q: %w", addr, err)
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return -1, fmt.Errorf("invalid port %q: %v", portStr, err)
+		return -1, fmt.Errorf("invalid port %q: %w", portStr, err)
 	}
 	ip := net.ParseIP(host).To4()
 	if ip == nil {
@@ -59,17 +64,21 @@ func NewRawSocket(addr string) (int, error) {
 
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, syscall.IPPROTO_UDP)
 	if err != nil {
-		return -1, fmt.Errorf("socket creation failed: %v", err)
+		return -1, fmt.Errorf("socket creation failed: %w", err)
 	}
 
 	// Allow reuse address to avoid "address already in use" in tests
-	_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	err = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	if err != nil {
+		_ = syscall.Close(fd)
+		return -1, fmt.Errorf("setsockopt SO_REUSEADDR failed: %w", err)
+	}
 
 	var sockaddr [4]byte
 	copy(sockaddr[:], ip)
 	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Port: port, Addr: sockaddr}); err != nil {
 		_ = syscall.Close(fd)
-		return -1, fmt.Errorf("bind failed: %v", err)
+		return -1, fmt.Errorf("bind failed: %w", err)
 	}
 	return fd, nil
 }
@@ -77,26 +86,42 @@ func NewRawSocket(addr string) (int, error) {
 // RecvFrom читает данные из сокета. Возвращает байты и адрес отправителя (syscall.SockaddrInet4).
 // Если таймаут не нужен, просто блокируется до получения данных.
 func RecvFrom(fd int) ([]byte, *syscall.SockaddrInet4, error) {
-	buf := make([]byte, 65535) // максимальный размер UDP датаграммы
-	n, from, err := syscall.Recvfrom(fd, buf, 0)
-	if err != nil {
-		return nil, nil, fmt.Errorf("recvfrom failed: %v", err)
+	buf := make([]byte, udpBufferSize)
+	for {
+		n, from, err := syscall.Recvfrom(fd, buf, 0)
+		if err == nil {
+			fromInet4, ok := from.(*syscall.SockaddrInet4)
+			if !ok {
+				return nil, nil, fmt.Errorf("unexpected socket address type: %T", from)
+			}
+			return buf[:n], fromInet4, nil
+		}
+
+		// Retry on temporary errors: EAGAIN (resource temporarily unavailable)
+		// and EINTR (system call interrupted by signal)
+		if err == syscall.EAGAIN || err == syscall.EINTR {
+			continue
+		}
+		return nil, nil, fmt.Errorf("recvfrom failed: %w", err)
 	}
-	// Преобразуем from в SockaddrInet4
-	fromInet4, ok := from.(*syscall.SockaddrInet4)
-	if !ok {
-		return nil, nil, fmt.Errorf("unexpected socket address type: %T", from)
-	}
-	return buf[:n], fromInet4, nil
 }
 
 // SendTo отправляет данные на указанный адрес.
 func SendTo(fd int, data []byte, addr *syscall.SockaddrInet4) error {
+	// Retry once on temporary errors: EAGAIN (resource temporarily unavailable)
+	// and EINTR (system call interrupted by signal)
 	err := syscall.Sendto(fd, data, 0, addr)
-	if err != nil {
-		return fmt.Errorf("sendto failed: %v", err)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if err == syscall.EAGAIN || err == syscall.EINTR {
+		err = syscall.Sendto(fd, data, 0, addr)
+		if err != nil {
+			return fmt.Errorf("sendto failed after retry: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("sendto failed: %w", err)
 }
 
 // CloseSocket закрывает сокет.
