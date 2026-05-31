@@ -15,30 +15,11 @@
 package raft
 
 import (
-	"sync"
 	"testing"
 	"time"
 
 	"zeroraft/internal/transport"
 )
-
-type mockSend struct {
-	mu       sync.Mutex
-	messages []interface{}
-}
-
-func (m *mockSend) send(addr string, msg interface{}) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.messages = append(m.messages, msg)
-	return nil
-}
-
-func (m *mockSend) getMessages() []interface{} {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]interface{}{}, m.messages...)
-}
 
 func TestNewRaftNode(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
