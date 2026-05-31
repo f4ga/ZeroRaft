@@ -535,3 +535,8 @@ func (rn *RaftNode) GetPeerAddr(id int) string {
 	defer rn.mu.RUnlock()
 	return rn.peers[id]
 }
+func randomElectionTimeout() time.Duration {
+	min := 150 * time.Millisecond
+	max := 300 * time.Millisecond
+	return min + time.Duration(rand.Int63n(int64(max-min)))
+}

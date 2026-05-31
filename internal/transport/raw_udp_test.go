@@ -308,3 +308,52 @@ func getSockAddr(fd int) (*syscall.SockaddrInet4, error) {
 	}
 	return inet4, nil
 }
+
+// Добавить в конец файла:
+
+func TestRawUDPSend(t *testing.T) {
+	udp, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP failed: %v", err)
+	}
+	defer udp.Close()
+
+	addr := &syscall.SockaddrInet4{Port: 12345, Addr: [4]byte{127, 0, 0, 1}}
+	err = udp.Send([]byte("test"), addr)
+	if err != nil {
+		t.Errorf("Send failed: %v", err)
+	}
+}
+
+func TestRawUDPReceive(t *testing.T) {
+	udp1, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP failed: %v", err)
+	}
+	defer udp1.Close()
+
+	udp2, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP failed: %v", err)
+	}
+	defer udp2.Close()
+
+	addr2, err := getSockAddr(udp2.GetFD())
+	if err != nil {
+		t.Fatalf("failed to get address: %v", err)
+	}
+
+	err = udp1.Send([]byte("ping"), addr2)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	data, _, err := udp2.Receive()
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+
+	if string(data) != "ping" {
+		t.Errorf("expected 'ping', got %s", data)
+	}
+}

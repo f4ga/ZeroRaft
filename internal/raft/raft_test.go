@@ -15,6 +15,7 @@
 package raft
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -185,6 +186,28 @@ func TestHandleRequestVote(t *testing.T) {
 	}
 }
 
+func TestHandleRequestVoteWithHigherTerm(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.currentTerm = 5
+
+	args := transport.RequestVote{
+		Type:         "RequestVote",
+		Term:         3,
+		CandidateID:  2,
+		LastLogIndex: 0,
+		LastLogTerm:  0,
+	}
+
+	resp := node.handleRequestVote(args)
+
+	if resp.VoteGranted {
+		t.Error("expected vote denied for stale term")
+	}
+}
+
 func TestHandleAppendEntries(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	sendFunc := func(addr string, msg interface{}) error { return nil }
@@ -210,6 +233,103 @@ func TestHandleAppendEntries(t *testing.T) {
 	resp = node.handleAppendEntries(args)
 	if resp.Success {
 		t.Error("expected failure for stale term")
+	}
+}
+
+func TestHandleAppendEntriesWithLogEntries(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+
+	// Log starts with sentinel (index 0), so length is 1 initially
+	initialLen := node.log.Len() // should be 1 (sentinel only)
+
+	args := transport.AppendEntries{
+		Type:         "AppendEntries",
+		Term:         1,
+		LeaderID:     2,
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+		Entries: []transport.LogEntry{
+			{Index: 1, Term: 1, Command: "test"},
+		},
+		LeaderCommit: 0,
+	}
+
+	resp := node.handleAppendEntries(args)
+
+	if !resp.Success {
+		t.Error("expected success")
+	}
+
+	// After adding 1 entry: sentinel (index 0) + new entry (index 1) = 2
+	expectedLen := initialLen + 1 // 1 + 1 = 2
+	if node.log.Len() != expectedLen {
+		t.Errorf("expected log length %d, got %d", expectedLen, node.log.Len())
+	}
+}
+func TestHandleAppendEntriesWithConflict(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+
+	entry := LogEntry{Index: 1, Term: 1, Command: "old"}
+	node.log.Append(entry)
+
+	args := transport.AppendEntries{
+		Type:         "AppendEntries",
+		Term:         2,
+		LeaderID:     2,
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+		Entries: []transport.LogEntry{
+			{Index: 1, Term: 2, Command: "new"},
+		},
+		LeaderCommit: 0,
+	}
+
+	resp := node.handleAppendEntries(args)
+
+	if !resp.Success {
+		t.Error("expected success")
+	}
+
+	last := node.log.Last()
+	if last.Index == 0 {
+		t.Fatal("no entries in log")
+	}
+	if last.Command != "new" {
+		t.Errorf("expected command 'new', got %s", last.Command)
+	}
+}
+
+func TestHandleAppendEntriesWithPrevLogMismatch(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+
+	entry := LogEntry{Index: 1, Term: 1, Command: "test"}
+	node.log.Append(entry)
+
+	args := transport.AppendEntries{
+		Type:         "AppendEntries",
+		Term:         1,
+		LeaderID:     2,
+		PrevLogIndex: 2,
+		PrevLogTerm:  0,
+		Entries: []transport.LogEntry{
+			{Index: 3, Term: 1, Command: "new"},
+		},
+		LeaderCommit: 0,
+	}
+
+	resp := node.handleAppendEntries(args)
+
+	if resp.Success {
+		t.Error("expected failure for prevLog mismatch")
 	}
 }
 
@@ -276,5 +396,181 @@ func TestApplyCommittedEntries(t *testing.T) {
 
 	if node.lastApplied != 1 {
 		t.Errorf("expected lastApplied 1, got %d", node.lastApplied)
+	}
+}
+
+func TestPersistStateLocked(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	dir := t.TempDir()
+	node := NewRaftNode(1, peers, dir, sendFunc)
+
+	node.persistStateLocked()
+
+	state, err := LoadState(dir)
+	if err != nil {
+		t.Fatalf("LoadState failed: %v", err)
+	}
+
+	if state.CurrentTerm != node.currentTerm {
+		t.Errorf("expected term %d, got %d", node.currentTerm, state.CurrentTerm)
+	}
+}
+
+func TestRandomElectionTimeout(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		timeout := randomElectionTimeout()
+		if timeout < 150*time.Millisecond || timeout > 300*time.Millisecond {
+			t.Errorf("timeout %v out of range [150ms, 300ms]", timeout)
+		}
+	}
+}
+
+func TestResetElectionTimer(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.resetElectionTimer()
+}
+
+func TestConvertToTransportEntries(t *testing.T) {
+	entries := []LogEntry{
+		{Index: 1, Term: 1, Command: "cmd1"},
+		{Index: 2, Term: 1, Command: "cmd2"},
+	}
+
+	transportEntries := convertToTransportEntries(entries)
+
+	if len(transportEntries) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(transportEntries))
+	}
+
+	if transportEntries[0].Index != 1 {
+		t.Errorf("expected index 1, got %d", transportEntries[0].Index)
+	}
+
+	if transportEntries[0].Command != "cmd1" {
+		t.Errorf("expected cmd1, got %s", transportEntries[0].Command)
+	}
+}
+func TestHandleResponseVote(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.startElection()
+
+	resp := transport.RequestVoteResponse{
+		Type:        "RequestVoteResponse",
+		Term:        1,
+		VoteGranted: true,
+	}
+
+	node.handleResponseVote(2, resp)
+}
+
+func TestHandleAppendEntriesResponse(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+
+	resp := transport.AppendEntriesResponse{
+		Type:    "AppendEntriesResponse",
+		Term:    1,
+		Success: true,
+	}
+
+	node.handleAppendEntriesResponse(2, resp)
+}
+
+func TestHandleRequestVoteResponseHigherTerm(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.startElection() // makes node Candidate with term=1
+
+	resp := transport.RequestVoteResponse{
+		Type:        "RequestVoteResponse",
+		Term:        10,
+		VoteGranted: false,
+	}
+
+	node.handleResponseVote(2, resp)
+
+	if node.currentTerm != 10 {
+		t.Errorf("expected term 10, got %d", node.currentTerm)
+	}
+	if node.state != Follower {
+		t.Errorf("expected Follower, got %v", node.state)
+	}
+}
+func TestRunLoop(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+
+	done := make(chan bool)
+	go func() {
+		node.run()
+		done <- true
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	node.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Error("run loop didn't stop")
+	}
+}
+
+func TestSendHeartbeats(t *testing.T) {
+	var mu sync.Mutex
+	var lastSent interface{}
+	sendFunc := func(addr string, msg interface{}) error {
+		mu.Lock()
+		defer mu.Unlock()
+		lastSent = msg
+		return nil
+	}
+
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.state = Leader
+
+	// Initialize nextIndex for followers
+	for peerID := range peers {
+		node.nextIndex[peerID] = 1
+		node.matchIndex[peerID] = 0
+	}
+
+	// Call sendHeartbeats directly (it's synchronous when called directly)
+	node.sendHeartbeats()
+
+	// Give a little time for async goroutines to complete
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	sent := lastSent
+	mu.Unlock()
+
+	if sent == nil {
+		t.Error("expected heartbeat to be sent")
+		return
+	}
+
+	ae, ok := sent.(transport.AppendEntries)
+	if !ok {
+		t.Fatalf("expected AppendEntries, got %T", sent)
+	}
+
+	if len(ae.Entries) != 0 {
+		t.Error("expected empty entries for heartbeat")
 	}
 }
