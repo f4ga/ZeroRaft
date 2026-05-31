@@ -16,12 +16,13 @@ package transport
 
 import (
 	"fmt"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 )
 
-func TestNewRawSocket(t *testing.T) {
+func TestNewRawSocketValidPort(t *testing.T) {
 	fd, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
@@ -29,18 +30,54 @@ func TestNewRawSocket(t *testing.T) {
 	if fd <= 0 {
 		t.Errorf("expected fd > 0, got %d", fd)
 	}
-	_ = CloseSocket(fd)
-}
+	defer func() { _ = CloseSocket(fd) }()
 
-func TestNewRawSocketInvalidAddr(t *testing.T) {
-	_, err := NewRawSocket("invalid")
-	if err == nil {
-		t.Error("expected error for invalid address")
+	addr, err := getSockAddr(fd)
+	if err != nil {
+		t.Fatalf("failed to get socket address: %v", err)
+	}
+	if addr.Port == 0 {
+		t.Error("expected non-zero port for :0 binding")
 	}
 }
 
-func TestSendAndReceive(t *testing.T) {
-	// Create two sockets on random ports
+func TestNewRawSocketSpecificPort(t *testing.T) {
+	fd, err := NewRawSocket("127.0.0.1:18001")
+	if err != nil {
+		t.Fatalf("NewRawSocket failed: %v", err)
+	}
+	defer func() { _ = CloseSocket(fd) }()
+
+	addr, err := getSockAddr(fd)
+	if err != nil {
+		t.Fatalf("failed to get socket address: %v", err)
+	}
+	if addr.Port != 18001 {
+		t.Errorf("expected port 18001, got %d", addr.Port)
+	}
+}
+
+func TestNewRawSocketInvalidAddr(t *testing.T) {
+	invalidAddrs := []string{
+		"",
+		"invalid",
+		"127.0.0.1",
+		"127.0.0.1:99999",
+		"999.999.999.999:8000",
+	}
+
+	for _, addr := range invalidAddrs {
+		t.Run(addr, func(t *testing.T) {
+			fd, err := NewRawSocket(addr)
+			if err == nil {
+				_ = CloseSocket(fd)
+				t.Errorf("expected error for addr %q", addr)
+			}
+		})
+	}
+}
+
+func TestSendAndReceiveBasic(t *testing.T) {
 	fd1, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 1: %v", err)
@@ -53,40 +90,29 @@ func TestSendAndReceive(t *testing.T) {
 	}
 	defer func() { _ = CloseSocket(fd2) }()
 
-	// Get address of fd2
 	addr2, err := getSockAddr(fd2)
 	if err != nil {
 		t.Fatalf("failed to get socket address: %v", err)
 	}
 
-	// Send "hello" from fd1 to fd2
-	msg := []byte("hello")
-	err = SendTo(fd1, msg, addr2)
-	if err != nil {
-		t.Fatalf("SendTo failed: %v", err)
-	}
+	testCases := []string{"hello", "world", "single", "test message"}
 
-	// Receive with timeout
-	recvCh := make(chan []byte)
-	errCh := make(chan error)
-	go func() {
-		data, _, err := RecvFrom(fd2)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		recvCh <- data
-	}()
+	for _, expected := range testCases {
+		t.Run(expected, func(t *testing.T) {
+			err = SendTo(fd1, []byte(expected), addr2)
+			if err != nil {
+				t.Fatalf("SendTo failed: %v", err)
+			}
 
-	select {
-	case data := <-recvCh:
-		if string(data) != "hello" {
-			t.Errorf("expected 'hello', got %q", string(data))
-		}
-	case err := <-errCh:
-		t.Fatalf("RecvFrom failed: %v", err)
-	case <-time.After(1 * time.Second):
-		t.Fatal("timeout waiting for receive")
+			received, _, err := recvWithTimeout(fd2, 1*time.Second)
+			if err != nil {
+				t.Fatalf("RecvFrom failed: %v", err)
+			}
+
+			if string(received) != expected {
+				t.Errorf("expected %q, got %q", expected, string(received))
+			}
+		})
 	}
 }
 
@@ -95,64 +121,32 @@ func TestSendToClosedSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
 	}
-	_ = CloseSocket(fd)
 
-	// Try to send to closed socket
 	addr := &syscall.SockaddrInet4{Port: 1234, Addr: [4]byte{127, 0, 0, 1}}
+
+	if err := CloseSocket(fd); err != nil {
+		t.Fatalf("CloseSocket failed: %v", err)
+	}
+
 	err = SendTo(fd, []byte("test"), addr)
 	if err == nil {
 		t.Error("expected error when sending to closed socket")
 	}
 }
 
-func TestRecvFromWithCancel(t *testing.T) {
+func TestRecvFromClosedSocket(t *testing.T) {
 	fd, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
 	}
-	defer func() { _ = CloseSocket(fd) }()
 
-	// Get socket address
-	addr, err := getSockAddr(fd)
-	if err != nil {
-		t.Fatalf("failed to get socket address: %v", err)
+	if err := CloseSocket(fd); err != nil {
+		t.Fatalf("CloseSocket failed: %v", err)
 	}
 
-	// Start recv in goroutine
-	dataCh := make(chan []byte)
-	errCh := make(chan error)
-	go func() {
-		data, _, err := RecvFrom(fd)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		dataCh <- data
-	}()
-
-	// Send a packet to ourselves
-	senderFd, err := NewRawSocket("127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to create sender socket: %v", err)
-	}
-	defer func() { _ = CloseSocket(senderFd) }()
-
-	msg := []byte("ping")
-	err = SendTo(senderFd, msg, addr)
-	if err != nil {
-		t.Fatalf("SendTo failed: %v", err)
-	}
-
-	// Wait for receive
-	select {
-	case data := <-dataCh:
-		if string(data) != "ping" {
-			t.Errorf("expected 'ping', got %q", string(data))
-		}
-	case err := <-errCh:
-		t.Fatalf("RecvFrom failed: %v", err)
-	case <-time.After(1 * time.Second):
-		t.Fatal("timeout waiting for RecvFrom")
+	_, _, err = RecvFrom(fd)
+	if err == nil {
+		t.Error("expected error when receiving from closed socket")
 	}
 }
 
@@ -174,39 +168,135 @@ func TestConcurrentSendReceive(t *testing.T) {
 		t.Fatalf("failed to get socket address: %v", err)
 	}
 
-	const workers = 10
-	done := make(chan bool, workers)
-	for i := 0; i < workers; i++ {
-		go func(id int, addr syscall.SockaddrInet4) {
-			msg := []byte{byte(id)}
-			err := SendTo(fd1, msg, &addr)
+	const numWorkers = 10
+	var wg sync.WaitGroup
+	received := make(chan []byte, numWorkers)
+
+	go func() {
+		for i := 0; i < numWorkers; i++ {
+			data, _, err := recvWithTimeout(fd2, 2*time.Second)
 			if err != nil {
-				t.Errorf("worker %d SendTo failed: %v", id, err)
+				t.Errorf("RecvFrom failed: %v", err)
+				return
 			}
-			done <- true
-		}(i, *addr2)
-	}
-
-	// Receive all messages
-	received := make(map[byte]bool)
-	for i := 0; i < workers; i++ {
-		data, _, err := RecvFrom(fd2)
-		if err != nil {
-			t.Fatalf("RecvFrom failed: %v", err)
+			received <- data
 		}
-		received[data[0]] = true
+		close(received)
+	}()
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			msg := []byte(fmt.Sprintf("msg-%d", id))
+			addrCopy := *addr2
+			err := SendTo(fd1, msg, &addrCopy)
+			if err != nil {
+				t.Errorf("SendTo failed for worker %d: %v", id, err)
+			}
+		}(i)
 	}
 
-	for i := 0; i < workers; i++ {
-		<-done
+	wg.Wait()
+
+	count := 0
+	for range received {
+		count++
 	}
 
-	if len(received) != workers {
-		t.Errorf("expected %d unique messages, got %d", workers, len(received))
+	if count != numWorkers {
+		t.Errorf("expected %d messages, got %d", numWorkers, count)
 	}
 }
 
-// Helper to get socket address (not exported)
+func TestMultipleSendReceive(t *testing.T) {
+	fd1, err := NewRawSocket("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to create socket 1: %v", err)
+	}
+	defer func() { _ = CloseSocket(fd1) }()
+
+	fd2, err := NewRawSocket("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to create socket 2: %v", err)
+	}
+	defer func() { _ = CloseSocket(fd2) }()
+
+	addr2, err := getSockAddr(fd2)
+	if err != nil {
+		t.Fatalf("failed to get socket address: %v", err)
+	}
+
+	const numMessages = 20
+	for i := 0; i < numMessages; i++ {
+		msg := []byte(fmt.Sprintf("msg-%d", i))
+
+		err = SendTo(fd1, msg, addr2)
+		if err != nil {
+			t.Fatalf("SendTo failed at iteration %d: %v", i, err)
+		}
+
+		received, _, err := recvWithTimeout(fd2, 1*time.Second)
+		if err != nil {
+			t.Fatalf("RecvFrom failed at iteration %d: %v", i, err)
+		}
+
+		if string(received) != string(msg) {
+			t.Errorf("iteration %d: expected %q, got %q", i, msg, received)
+		}
+	}
+}
+
+func TestZeroPortBinding(t *testing.T) {
+	fd, err := NewRawSocket("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawSocket failed: %v", err)
+	}
+	defer func() { _ = CloseSocket(fd) }()
+
+	addr, err := getSockAddr(fd)
+	if err != nil {
+		t.Fatalf("failed to get socket address: %v", err)
+	}
+
+	if addr.Port == 0 {
+		t.Error("expected non-zero port when binding to :0")
+	}
+}
+
+func TestNewRawUDP(t *testing.T) {
+	udp, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP failed: %v", err)
+	}
+	defer func() { _ = udp.Close() }()
+
+	if udp.GetFD() <= 0 {
+		t.Error("expected valid file descriptor")
+	}
+}
+
+func recvWithTimeout(fd int, timeout time.Duration) ([]byte, *syscall.SockaddrInet4, error) {
+	type result struct {
+		data []byte
+		addr *syscall.SockaddrInet4
+		err  error
+	}
+
+	resultCh := make(chan result, 1)
+	go func() {
+		data, addr, err := RecvFrom(fd)
+		resultCh <- result{data, addr, err}
+	}()
+
+	select {
+	case res := <-resultCh:
+		return res.data, res.addr, res.err
+	case <-time.After(timeout):
+		return nil, nil, fmt.Errorf("recv timeout after %v", timeout)
+	}
+}
+
 func getSockAddr(fd int) (*syscall.SockaddrInet4, error) {
 	addr, err := syscall.Getsockname(fd)
 	if err != nil {
@@ -217,14 +307,4 @@ func getSockAddr(fd int) (*syscall.SockaddrInet4, error) {
 		return nil, fmt.Errorf("unexpected socket address type: %T", addr)
 	}
 	return inet4, nil
-}
-
-// NOTE: EAGAIN/EINTR handling is implemented in code but hard to test
-// without non-blocking sockets. Manual verification recommended.
-// This test is a placeholder and will be implemented later.
-func TestRecvFromHandlesEAGAIN(t *testing.T) {
-	// This test verifies that RecvFrom retries on EAGAIN/EINTR
-	// without real syscall - can be mocked or non-blocking socket used.
-	// FIXME(phase3.5): implement test with mock or non-blocking socket
-	fmt.Println("INFO: TestRecvFromHandlesEAGAIN is a placeholder, manual verification recommended.")
 }
