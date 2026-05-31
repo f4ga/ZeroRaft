@@ -1,4 +1,3 @@
-```markdown
 # ZeroRaft
 
 <div align="center">
@@ -456,4 +455,3 @@ Apache License 2.0. See [LICENSE](LICENSE) for details.
   <br/><br/>
   <a href="https://github.com/f4ga/ZeroRaft">github.com/f4ga/ZeroRaft</a>
 </div>
-```
