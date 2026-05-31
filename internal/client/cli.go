@@ -71,6 +71,7 @@ func (c *CLI) Run() error {
 	return scanner.Err()
 }
 
+// executeCommand parses and executes a command.
 func (c *CLI) executeCommand(line string) error {
 	parts := strings.Fields(line)
 	if len(parts) == 0 {
@@ -102,6 +103,7 @@ func (c *CLI) executeCommand(line string) error {
 	}
 }
 
+// cmdStatus displays node status.
 func (c *CLI) cmdStatus() error {
 	state := c.node.GetState()
 	term := c.node.GetCurrentTerm()
@@ -115,6 +117,7 @@ func (c *CLI) cmdStatus() error {
 	return nil
 }
 
+// cmdSet sets a key-value pair.
 func (c *CLI) cmdSet(key, value string) error {
 	// Check if this node is leader
 	if c.node.GetState() == raft.Leader {
@@ -140,6 +143,7 @@ func (c *CLI) cmdSet(key, value string) error {
 	return fmt.Errorf("transport not available")
 }
 
+// cmdGet gets a value by key.
 func (c *CLI) cmdGet(key string) error {
 	value, ok := c.node.GetStateMachineValue(key)
 	if !ok {
@@ -150,6 +154,7 @@ func (c *CLI) cmdGet(key string) error {
 	return nil
 }
 
+// cmdLeader shows current leader.
 func (c *CLI) cmdLeader() error {
 	leaderID := c.node.GetLeaderID()
 	if leaderID == -1 {
@@ -161,6 +166,7 @@ func (c *CLI) cmdLeader() error {
 	return nil
 }
 
+// cmdChaos sets packet loss probability.
 func (c *CLI) cmdChaos(arg string) error {
 	// Parse "loss=0.5"
 	if !strings.HasPrefix(arg, "loss=") {
