@@ -1,4 +1,3 @@
-```markdown
 <div align="center">
   <h1>ZeroRaft</h1>
   <p>Raft consensus protocol from scratch. No net package. No libraries.</p>
@@ -374,4 +373,3 @@ Apache License 2.0. See [LICENSE](LICENSE).
 <div align="center">
   <a href="https://github.com/f4ga/ZeroRaft">github.com/f4ga/ZeroRaft</a>
 </div>
-```
