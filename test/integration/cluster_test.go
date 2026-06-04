@@ -4,23 +4,21 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package integration
 
 import (
 	"sync"
 	"testing"
 	"time"
-
+	"zeroraft/internal/codec"
 	"zeroraft/internal/raft"
-	"zeroraft/internal/transport"
 )
 
 type message struct {
@@ -67,11 +65,9 @@ func (r *Router) Send(addr string, msg interface{}) error {
 		break
 	}
 	r.mu.Unlock()
-
 	r.inbox <- message{fromID: fromID, toAddr: addr, msg: msg}
 	return nil
 }
-
 func (r *Router) deliveryLoop() {
 	for {
 		select {
@@ -82,11 +78,9 @@ func (r *Router) deliveryLoop() {
 		}
 	}
 }
-
 func (r *Router) deliver(msg message) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
 	var targetID int
 	switch msg.toAddr {
 	case "node1":
@@ -98,24 +92,22 @@ func (r *Router) deliver(msg message) {
 	default:
 		return
 	}
-
 	target, ok := r.nodes[targetID]
 	if !ok {
 		return
 	}
-
 	switch m := msg.msg.(type) {
-	case transport.RequestVote:
+	case codec.RequestVote:
 		resp := target.HandleRequestVote(m)
 		senderAddr := r.addresses[msg.fromID]
 		go func() { _ = r.Send(senderAddr, resp) }()
-	case transport.RequestVoteResponse:
+	case codec.RequestVoteResponse:
 		target.HandleRequestVoteResponse(msg.fromID, m)
-	case transport.AppendEntries:
+	case codec.AppendEntries:
 		resp := target.HandleAppendEntries(m)
 		senderAddr := r.addresses[msg.fromID]
 		go func() { _ = r.Send(senderAddr, resp) }()
-	case transport.AppendEntriesResponse:
+	case codec.AppendEntriesResponse:
 		target.HandleAppendEntriesResponse(msg.fromID, m)
 	}
 }
@@ -129,33 +121,27 @@ func (r *Router) Stop() {
 func TestClusterElectionAndReplication(t *testing.T) {
 	router := NewRouter()
 	defer router.Stop()
-
 	peers := map[int]string{
 		1: "node1",
 		2: "node2",
 		3: "node3",
 	}
-
 	node1 := raft.NewRaftNode(1, peers, t.TempDir(), router.Send)
 	node2 := raft.NewRaftNode(2, peers, t.TempDir(), router.Send)
 	node3 := raft.NewRaftNode(3, peers, t.TempDir(), router.Send)
-
 	router.Register(1, node1)
 	router.Register(2, node2)
 	router.Register(3, node3)
-
 	node1.Start()
 	node2.Start()
 	node3.Start()
 	defer node1.Stop()
 	defer node2.Stop()
 	defer node3.Stop()
-
 	// Wait for leader election
 	timeout := time.After(5 * time.Second)
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
-
 	var leaderID int
 	for {
 		select {
@@ -180,7 +166,6 @@ func TestClusterElectionAndReplication(t *testing.T) {
 		}
 	}
 leaderElected:
-
 	var leaderNode *raft.RaftNode
 	switch leaderID {
 	case 1:
@@ -190,17 +175,14 @@ leaderElected:
 	case 3:
 		leaderNode = node3
 	}
-
 	// Submit a command
 	idx, err := leaderNode.Submit("set foo bar")
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
 	}
 	t.Logf("Command submitted at index %d", idx)
-
 	// Wait for replication and commit
 	time.Sleep(2 * time.Second)
-
 	// Verify all nodes have the value
 	allSuccess := true
 	for id, node := range map[int]*raft.RaftNode{1: node1, 2: node2, 3: node3} {

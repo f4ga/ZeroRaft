@@ -4,14 +4,13 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package raft
 
 import (
@@ -107,7 +106,6 @@ func TestConcurrentSave(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-
 	// Verify each worker's state was saved correctly
 	for i := 0; i < workers; i++ {
 		workerDir := filepath.Join(dir, fmt.Sprintf("worker-%d", i))
@@ -127,9 +125,7 @@ func TestConcurrentSave(t *testing.T) {
 func TestIntegrationWithRaftNode(t *testing.T) {
 	dir := t.TempDir()
 	peers := map[int]string{2: "peer2"}
-
 	mockSend := func(to string, msg interface{}) error { return nil }
-
 	// Create a node, force a term change (no Start = no background goroutine = no race)
 	node := NewRaftNode(1, peers, dir, mockSend)
 	node.currentTerm = 5
@@ -137,14 +133,12 @@ func TestIntegrationWithRaftNode(t *testing.T) {
 	if err := SaveState(dir, PersistentState{CurrentTerm: node.currentTerm, VotedFor: node.votedFor}); err != nil {
 		t.Fatalf("initial SaveState failed: %v", err)
 	}
-
 	// Re-create a node with the same data directory
 	newNode := NewRaftNode(1, peers, dir, mockSend)
 	if newNode.currentTerm != 5 || newNode.votedFor != 2 {
 		t.Fatalf("state not recovered after restart: term=%d votedFor=%d", newNode.currentTerm, newNode.votedFor)
 	}
 }
-
 func TestSaveStateInvalidDir(t *testing.T) {
 	// Use a path that cannot be created (e.g., on a read-only filesystem or invalid path)
 	// On Linux, /proc/self/ is a valid dir but we can't write to it

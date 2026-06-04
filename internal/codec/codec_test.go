@@ -4,15 +4,14 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-package transport
+package codec
 
 import (
 	"encoding/binary"
@@ -21,7 +20,6 @@ import (
 )
 
 // No need to call rand.Seed in Go 1.20+
-
 func TestEncodeDecodeRequestVote(t *testing.T) {
 	msg := RequestVote{
 		Type:         "RequestVote",
@@ -30,22 +28,18 @@ func TestEncodeDecodeRequestVote(t *testing.T) {
 		LastLogIndex: 100,
 		LastLogTerm:  4,
 	}
-
 	encoded, err := Encode(msg)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
-
 	decoded, err := Decode(encoded)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
-
 	decodedMsg, ok := decoded.(RequestVote)
 	if !ok {
 		t.Fatalf("Decoded message is not RequestVote, got %T", decoded)
 	}
-
 	if decodedMsg.Term != msg.Term {
 		t.Errorf("Term mismatch: got %d, want %d", decodedMsg.Term, msg.Term)
 	}
@@ -59,29 +53,24 @@ func TestEncodeDecodeRequestVote(t *testing.T) {
 		t.Errorf("LastLogTerm mismatch: got %d, want %d", decodedMsg.LastLogTerm, msg.LastLogTerm)
 	}
 }
-
 func TestEncodeDecodeRequestVoteResponse(t *testing.T) {
 	msg := RequestVoteResponse{
 		Type:        "RequestVoteResponse",
 		Term:        5,
 		VoteGranted: true,
 	}
-
 	encoded, err := Encode(msg)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
-
 	decoded, err := Decode(encoded)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
-
 	decodedMsg, ok := decoded.(RequestVoteResponse)
 	if !ok {
 		t.Fatalf("Decoded message is not RequestVoteResponse, got %T", decoded)
 	}
-
 	if decodedMsg.Term != msg.Term {
 		t.Errorf("Term mismatch: got %d, want %d", decodedMsg.Term, msg.Term)
 	}
@@ -89,7 +78,6 @@ func TestEncodeDecodeRequestVoteResponse(t *testing.T) {
 		t.Errorf("VoteGranted mismatch: got %v, want %v", decodedMsg.VoteGranted, msg.VoteGranted)
 	}
 }
-
 func TestEncodeDecodeAppendEntries(t *testing.T) {
 	msg := AppendEntries{
 		Type:         "AppendEntries",
@@ -103,22 +91,18 @@ func TestEncodeDecodeAppendEntries(t *testing.T) {
 		},
 		LeaderCommit: 140,
 	}
-
 	encoded, err := Encode(msg)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
-
 	decoded, err := Decode(encoded)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
-
 	decodedMsg, ok := decoded.(AppendEntries)
 	if !ok {
 		t.Fatalf("Decoded message is not AppendEntries, got %T", decoded)
 	}
-
 	if decodedMsg.Term != msg.Term {
 		t.Errorf("Term mismatch: got %d, want %d", decodedMsg.Term, msg.Term)
 	}
@@ -149,29 +133,24 @@ func TestEncodeDecodeAppendEntries(t *testing.T) {
 		}
 	}
 }
-
 func TestEncodeDecodeAppendEntriesResponse(t *testing.T) {
 	msg := AppendEntriesResponse{
 		Type:    "AppendEntriesResponse",
 		Term:    7,
 		Success: false,
 	}
-
 	encoded, err := Encode(msg)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
-
 	decoded, err := Decode(encoded)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
-
 	decodedMsg, ok := decoded.(AppendEntriesResponse)
 	if !ok {
 		t.Fatalf("Decoded message is not AppendEntriesResponse, got %T", decoded)
 	}
-
 	if decodedMsg.Term != msg.Term {
 		t.Errorf("Term mismatch: got %d, want %d", decodedMsg.Term, msg.Term)
 	}
@@ -179,7 +158,6 @@ func TestEncodeDecodeAppendEntriesResponse(t *testing.T) {
 		t.Errorf("Success mismatch: got %v, want %v", decodedMsg.Success, msg.Success)
 	}
 }
-
 func TestEncodeWithEmptyEntries(t *testing.T) {
 	msg := AppendEntries{
 		Type:         "AppendEntries",
@@ -190,27 +168,22 @@ func TestEncodeWithEmptyEntries(t *testing.T) {
 		Entries:      []LogEntry{}, // empty slice
 		LeaderCommit: 0,
 	}
-
 	encoded, err := Encode(msg)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
-
 	decoded, err := Decode(encoded)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
-
 	decodedMsg, ok := decoded.(AppendEntries)
 	if !ok {
 		t.Fatalf("Decoded message is not AppendEntries, got %T", decoded)
 	}
-
 	if len(decodedMsg.Entries) != 0 {
 		t.Errorf("Expected empty Entries, got %d entries", len(decodedMsg.Entries))
 	}
 }
-
 func TestDecodeIncompleteData(t *testing.T) {
 	// Data shorter than 4 bytes
 	data := []byte{0, 0, 1}
@@ -219,19 +192,16 @@ func TestDecodeIncompleteData(t *testing.T) {
 		t.Error("Expected error for incomplete data, got nil")
 	}
 }
-
 func TestDecodeTruncatedJSON(t *testing.T) {
 	// Length prefix says 100 bytes, but actual data is shorter
 	data := make([]byte, 4)
 	binary.BigEndian.PutUint32(data[:4], 100) // length = 100
 	// data[4:] is missing
-
 	_, err := Decode(data)
 	if err == nil {
 		t.Error("Expected error for truncated JSON, got nil")
 	}
 }
-
 func TestEncodeDecodeRandomMessages(t *testing.T) {
 	// Generate 100 random messages (fuzzing)
 	for i := 0; i < 100; i++ {
@@ -276,29 +246,24 @@ func TestEncodeDecodeRandomMessages(t *testing.T) {
 				Success: rand.Intn(2) == 1,
 			}
 		}
-
 		encoded, err := Encode(msg)
 		if err != nil {
 			t.Fatalf("Encode failed on iteration %d: %v", i, err)
 		}
-
 		decoded, err := Decode(encoded)
 		if err != nil {
 			t.Fatalf("Decode failed on iteration %d: %v", i, err)
 		}
-
 		// Compare by re-encoding the decoded message and comparing bytes
 		reencoded, err := Encode(decoded)
 		if err != nil {
 			t.Fatalf("Re-encode failed on iteration %d: %v", i, err)
 		}
-
 		if string(encoded) != string(reencoded) {
 			t.Errorf("Round-trip mismatch on iteration %d", i)
 		}
 	}
 }
-
 func TestGetMessageType(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -348,26 +313,22 @@ func TestGetMessageType(t *testing.T) {
 			wantType: "AppendEntriesResponse",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			encoded, err := Encode(tt.msg)
 			if err != nil {
 				t.Fatalf("Encode failed: %v", err)
 			}
-
 			gotType, err := GetMessageType(encoded)
 			if err != nil {
 				t.Fatalf("GetMessageType failed: %v", err)
 			}
-
 			if gotType != tt.wantType {
 				t.Errorf("GetMessageType() = %q, want %q", gotType, tt.wantType)
 			}
 		})
 	}
 }
-
 func TestDecodeInvalidJSON(t *testing.T) {
 	// Length prefix says valid length, but JSON is invalid
 	data := make([]byte, 12)
@@ -378,7 +339,6 @@ func TestDecodeInvalidJSON(t *testing.T) {
 		t.Error("Expected error for invalid JSON, got nil")
 	}
 }
-
 func TestDecodeMissingTypeField(t *testing.T) {
 	// Valid JSON but missing "type" field
 	data := make([]byte, 10)
@@ -389,7 +349,6 @@ func TestDecodeMissingTypeField(t *testing.T) {
 		t.Error("Expected error for missing type field, got nil")
 	}
 }
-
 func TestDecodeUnknownType(t *testing.T) {
 	// Valid JSON with unknown type
 	data := make([]byte, 20)
@@ -400,14 +359,12 @@ func TestDecodeUnknownType(t *testing.T) {
 		t.Error("Expected error for unknown type, got nil")
 	}
 }
-
 func TestGetMessageTypeInvalid(t *testing.T) {
 	// Too short data
 	_, err := GetMessageType([]byte{0, 0, 1})
 	if err == nil {
 		t.Error("Expected error for short data, got nil")
 	}
-
 	// Length exceeds data
 	data := make([]byte, 4)
 	binary.BigEndian.PutUint32(data[:4], 100)
@@ -415,7 +372,6 @@ func TestGetMessageTypeInvalid(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for length exceeding data, got nil")
 	}
-
 	// Invalid JSON
 	data = make([]byte, 8)
 	binary.BigEndian.PutUint32(data[:4], 4)
@@ -424,7 +380,6 @@ func TestGetMessageTypeInvalid(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for invalid JSON, got nil")
 	}
-
 	// JSON without type field
 	data = make([]byte, 8)
 	binary.BigEndian.PutUint32(data[:4], 2)
@@ -434,7 +389,6 @@ func TestGetMessageTypeInvalid(t *testing.T) {
 		t.Error("Expected error for missing type field, got nil")
 	}
 }
-
 func randomString(n int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, n)

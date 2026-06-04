@@ -4,14 +4,13 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package client
 
 import (
@@ -20,8 +19,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
 	"zeroraft/internal/raft"
+	"zeroraft/internal/transport"
 )
 
 // CLI represents the command-line interface.
@@ -50,7 +49,6 @@ func (c *CLI) Run() error {
 	fmt.Println("  /chaos loss=<0.0-1.0>      - set packet loss probability")
 	fmt.Println("  /exit                      - exit CLI")
 	fmt.Println()
-
 	for {
 		fmt.Print("> ")
 		if !scanner.Scan() {
@@ -77,7 +75,6 @@ func (c *CLI) executeCommand(line string) error {
 	if len(parts) == 0 {
 		return nil
 	}
-
 	switch parts[0] {
 	case "/status":
 		return c.cmdStatus()
@@ -109,7 +106,6 @@ func (c *CLI) cmdStatus() error {
 	term := c.node.GetCurrentTerm()
 	leaderID := c.node.GetLeaderID()
 	commitIndex := c.node.GetCommitIndex()
-
 	fmt.Printf("State: %s\n", state)
 	fmt.Printf("Term: %d\n", term)
 	fmt.Printf("Leader: node %d\n", leaderID)
@@ -124,7 +120,6 @@ func (c *CLI) cmdSet(key, value string) error {
 		_, err := c.node.Submit(fmt.Sprintf("set %s %s", key, value))
 		return err
 	}
-
 	// Redirect to leader
 	leaderID := c.node.GetLeaderID()
 	if leaderID == -1 {
@@ -134,7 +129,6 @@ func (c *CLI) cmdSet(key, value string) error {
 	if leaderAddr == "" {
 		return fmt.Errorf("leader address unknown")
 	}
-
 	// Send command to leader via UDP
 	cmd := fmt.Sprintf("SET %s %s\n", key, value)
 	if c.sendBinary != nil {
@@ -180,7 +174,7 @@ func (c *CLI) cmdChaos(arg string) error {
 	if loss < 0 || loss > 1 {
 		return fmt.Errorf("loss must be between 0.0 and 1.0")
 	}
-	// Note: SetDropProbability will be added in Phase 8
-	fmt.Printf("Packet loss probability set to %.2f (will be implemented in Phase 8)\n", loss)
+	transport.SetDropProbability(loss)
+	fmt.Printf("Packet loss probability set to %.2f\n", loss)
 	return nil
 }

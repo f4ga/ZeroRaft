@@ -4,15 +4,14 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-package transport
+package codec
 
 import (
 	"encoding/binary"
@@ -28,7 +27,6 @@ type ProtobufCodec struct{}
 // Encode serializes msg to protobuf and adds 4-byte length prefix.
 func (c *ProtobufCodec) Encode(msg interface{}) ([]byte, error) {
 	var protoMsg proto.Message
-
 	switch m := msg.(type) {
 	case RequestVote:
 		protoMsg = &raft.RequestVote{
@@ -71,18 +69,15 @@ func (c *ProtobufCodec) Encode(msg interface{}) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported message type: %T", msg)
 	}
-
 	// Marshal to protobuf
 	pbData, err := proto.Marshal(protoMsg)
 	if err != nil {
 		return nil, fmt.Errorf("protobuf marshal: %w", err)
 	}
-
 	// Add length prefix (using lengthPrefixSize constant)
 	buf := make([]byte, lengthPrefixSize+len(pbData))
 	binary.BigEndian.PutUint32(buf[:lengthPrefixSize], uint32(len(pbData)))
 	copy(buf[lengthPrefixSize:], pbData)
-
 	return buf, nil
 }
 
@@ -91,14 +86,11 @@ func (c *ProtobufCodec) Decode(data []byte) (interface{}, error) {
 	if len(data) < lengthPrefixSize {
 		return nil, ErrInsufficientData
 	}
-
 	length := binary.BigEndian.Uint32(data[:lengthPrefixSize])
 	if int(length) > len(data)-lengthPrefixSize {
 		return nil, fmt.Errorf("%w: declared %d bytes, only %d available", ErrLengthMismatch, length, len(data)-lengthPrefixSize)
 	}
-
 	pbData := data[lengthPrefixSize : lengthPrefixSize+length]
-
 	// Try RequestVote
 	var reqVote raft.RequestVote
 	if err := proto.Unmarshal(pbData, &reqVote); err == nil && reqVote.Type == "RequestVote" {
@@ -110,7 +102,6 @@ func (c *ProtobufCodec) Decode(data []byte) (interface{}, error) {
 			LastLogTerm:  reqVote.LastLogTerm,
 		}, nil
 	}
-
 	// Try RequestVoteResponse
 	var reqVoteResp raft.RequestVoteResponse
 	if err := proto.Unmarshal(pbData, &reqVoteResp); err == nil && reqVoteResp.Type == "RequestVoteResponse" {
@@ -120,7 +111,6 @@ func (c *ProtobufCodec) Decode(data []byte) (interface{}, error) {
 			VoteGranted: reqVoteResp.VoteGranted,
 		}, nil
 	}
-
 	// Try AppendEntries
 	var appendEntries raft.AppendEntries
 	if err := proto.Unmarshal(pbData, &appendEntries); err == nil && appendEntries.Type == "AppendEntries" {
@@ -142,7 +132,6 @@ func (c *ProtobufCodec) Decode(data []byte) (interface{}, error) {
 			LeaderCommit: appendEntries.LeaderCommit,
 		}, nil
 	}
-
 	// Try AppendEntriesResponse
 	var appendEntriesResp raft.AppendEntriesResponse
 	if err := proto.Unmarshal(pbData, &appendEntriesResp); err == nil && appendEntriesResp.Type == "AppendEntriesResponse" {
@@ -152,6 +141,5 @@ func (c *ProtobufCodec) Decode(data []byte) (interface{}, error) {
 			Success: appendEntriesResp.Success,
 		}, nil
 	}
-
 	return nil, fmt.Errorf("unknown protobuf message type")
 }

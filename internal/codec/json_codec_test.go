@@ -4,15 +4,14 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-package transport
+package codec
 
 import "testing"
 
@@ -35,7 +34,6 @@ func TestJSONCodecEncodeDecode(t *testing.T) {
 		t.Errorf("term mismatch: got %d, want 5", rv.Term)
 	}
 }
-
 func TestJSONCodecDecodeInvalid(t *testing.T) {
 	c := &JSONCodec{}
 	_, err := c.Decode([]byte{0, 0, 0, 0})
@@ -43,7 +41,6 @@ func TestJSONCodecDecodeInvalid(t *testing.T) {
 		t.Error("expected error for invalid data")
 	}
 }
-
 func TestJSONCodecDecodeShortData(t *testing.T) {
 	c := &JSONCodec{}
 	_, err := c.Decode([]byte{0, 0, 1})
@@ -51,7 +48,6 @@ func TestJSONCodecDecodeShortData(t *testing.T) {
 		t.Error("expected error for short data")
 	}
 }
-
 func TestJSONCodecDecodeLengthMismatch(t *testing.T) {
 	c := &JSONCodec{}
 	// Length prefix says 100 bytes, but only 4 bytes total
@@ -61,10 +57,8 @@ func TestJSONCodecDecodeLengthMismatch(t *testing.T) {
 		t.Error("expected error for length mismatch")
 	}
 }
-
 func TestJSONCodecEncodeDecodeAllTypes(t *testing.T) {
 	c := &JSONCodec{}
-
 	tests := []struct {
 		name string
 		msg  interface{}
@@ -94,7 +88,6 @@ func TestJSONCodecEncodeDecodeAllTypes(t *testing.T) {
 			msg:  AppendEntriesResponse{Type: "AppendEntriesResponse", Term: 1, Success: true},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			data, err := c.Encode(tt.msg)
@@ -116,7 +109,6 @@ func TestJSONCodecEncodeDecodeAllTypes(t *testing.T) {
 		})
 	}
 }
-
 func TestJSONCodecDecodeUnknownType(t *testing.T) {
 	c := &JSONCodec{}
 	// Encode a struct with unknown type field
@@ -132,7 +124,6 @@ func TestJSONCodecDecodeUnknownType(t *testing.T) {
 		t.Error("expected error for unknown message type")
 	}
 }
-
 func TestJSONCodecDecodeMissingType(t *testing.T) {
 	c := &JSONCodec{}
 	// Encode a struct without a type field

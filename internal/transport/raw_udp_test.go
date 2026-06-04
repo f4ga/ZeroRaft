@@ -4,14 +4,13 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package transport
 
 import (
@@ -31,7 +30,6 @@ func TestNewRawSocketValidPort(t *testing.T) {
 		t.Errorf("expected fd > 0, got %d", fd)
 	}
 	defer func() { _ = CloseSocket(fd) }()
-
 	addr, err := getSockAddr(fd)
 	if err != nil {
 		t.Fatalf("failed to get socket address: %v", err)
@@ -40,14 +38,12 @@ func TestNewRawSocketValidPort(t *testing.T) {
 		t.Error("expected non-zero port for :0 binding")
 	}
 }
-
 func TestNewRawSocketSpecificPort(t *testing.T) {
 	fd, err := NewRawSocket("127.0.0.1:18001")
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
 	}
 	defer func() { _ = CloseSocket(fd) }()
-
 	addr, err := getSockAddr(fd)
 	if err != nil {
 		t.Fatalf("failed to get socket address: %v", err)
@@ -56,7 +52,6 @@ func TestNewRawSocketSpecificPort(t *testing.T) {
 		t.Errorf("expected port 18001, got %d", addr.Port)
 	}
 }
-
 func TestNewRawSocketInvalidAddr(t *testing.T) {
 	invalidAddrs := []string{
 		"",
@@ -65,7 +60,6 @@ func TestNewRawSocketInvalidAddr(t *testing.T) {
 		"127.0.0.1:99999",
 		"999.999.999.999:8000",
 	}
-
 	for _, addr := range invalidAddrs {
 		t.Run(addr, func(t *testing.T) {
 			fd, err := NewRawSocket(addr)
@@ -76,102 +70,83 @@ func TestNewRawSocketInvalidAddr(t *testing.T) {
 		})
 	}
 }
-
 func TestSendAndReceiveBasic(t *testing.T) {
 	fd1, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 1: %v", err)
 	}
 	defer func() { _ = CloseSocket(fd1) }()
-
 	fd2, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 2: %v", err)
 	}
 	defer func() { _ = CloseSocket(fd2) }()
-
 	addr2, err := getSockAddr(fd2)
 	if err != nil {
 		t.Fatalf("failed to get socket address: %v", err)
 	}
-
 	testCases := []string{"hello", "world", "single", "test message"}
-
 	for _, expected := range testCases {
 		t.Run(expected, func(t *testing.T) {
 			err = SendTo(fd1, []byte(expected), addr2)
 			if err != nil {
 				t.Fatalf("SendTo failed: %v", err)
 			}
-
 			received, _, err := recvWithTimeout(fd2, 1*time.Second)
 			if err != nil {
 				t.Fatalf("RecvFrom failed: %v", err)
 			}
-
 			if string(received) != expected {
 				t.Errorf("expected %q, got %q", expected, string(received))
 			}
 		})
 	}
 }
-
 func TestSendToClosedSocket(t *testing.T) {
 	fd, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
 	}
-
 	addr := &syscall.SockaddrInet4{Port: 1234, Addr: [4]byte{127, 0, 0, 1}}
-
 	if err := CloseSocket(fd); err != nil {
 		t.Fatalf("CloseSocket failed: %v", err)
 	}
-
 	err = SendTo(fd, []byte("test"), addr)
 	if err == nil {
 		t.Error("expected error when sending to closed socket")
 	}
 }
-
 func TestRecvFromClosedSocket(t *testing.T) {
 	fd, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
 	}
-
 	if err := CloseSocket(fd); err != nil {
 		t.Fatalf("CloseSocket failed: %v", err)
 	}
-
 	_, _, err = RecvFrom(fd)
 	if err == nil {
 		t.Error("expected error when receiving from closed socket")
 	}
 }
-
 func TestConcurrentSendReceive(t *testing.T) {
 	fd1, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 1: %v", err)
 	}
 	defer func() { _ = CloseSocket(fd1) }()
-
 	fd2, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 2: %v", err)
 	}
 	defer func() { _ = CloseSocket(fd2) }()
-
 	addr2, err := getSockAddr(fd2)
 	if err != nil {
 		t.Fatalf("failed to get socket address: %v", err)
 	}
-
 	const numWorkers = 10
 	var wg sync.WaitGroup
 	received := make(chan []byte, numWorkers)
-
 	go func() {
 		for i := 0; i < numWorkers; i++ {
 			data, _, err := recvWithTimeout(fd2, 2*time.Second)
@@ -183,7 +158,6 @@ func TestConcurrentSendReceive(t *testing.T) {
 		}
 		close(received)
 	}()
-
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func(id int) {
@@ -196,99 +170,81 @@ func TestConcurrentSendReceive(t *testing.T) {
 			}
 		}(i)
 	}
-
 	wg.Wait()
-
 	count := 0
 	for range received {
 		count++
 	}
-
 	if count != numWorkers {
 		t.Errorf("expected %d messages, got %d", numWorkers, count)
 	}
 }
-
 func TestMultipleSendReceive(t *testing.T) {
 	fd1, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 1: %v", err)
 	}
 	defer func() { _ = CloseSocket(fd1) }()
-
 	fd2, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to create socket 2: %v", err)
 	}
 	defer func() { _ = CloseSocket(fd2) }()
-
 	addr2, err := getSockAddr(fd2)
 	if err != nil {
 		t.Fatalf("failed to get socket address: %v", err)
 	}
-
 	const numMessages = 20
 	for i := 0; i < numMessages; i++ {
 		msg := []byte(fmt.Sprintf("msg-%d", i))
-
 		err = SendTo(fd1, msg, addr2)
 		if err != nil {
 			t.Fatalf("SendTo failed at iteration %d: %v", i, err)
 		}
-
 		received, _, err := recvWithTimeout(fd2, 1*time.Second)
 		if err != nil {
 			t.Fatalf("RecvFrom failed at iteration %d: %v", i, err)
 		}
-
 		if string(received) != string(msg) {
 			t.Errorf("iteration %d: expected %q, got %q", i, msg, received)
 		}
 	}
 }
-
 func TestZeroPortBinding(t *testing.T) {
 	fd, err := NewRawSocket("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawSocket failed: %v", err)
 	}
 	defer func() { _ = CloseSocket(fd) }()
-
 	addr, err := getSockAddr(fd)
 	if err != nil {
 		t.Fatalf("failed to get socket address: %v", err)
 	}
-
 	if addr.Port == 0 {
 		t.Error("expected non-zero port when binding to :0")
 	}
 }
-
 func TestNewRawUDP(t *testing.T) {
 	udp, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
 	defer func() { _ = udp.Close() }()
-
 	if udp.GetFD() <= 0 {
 		t.Error("expected valid file descriptor")
 	}
 }
-
 func recvWithTimeout(fd int, timeout time.Duration) ([]byte, *syscall.SockaddrInet4, error) {
 	type result struct {
 		data []byte
 		addr *syscall.SockaddrInet4
 		err  error
 	}
-
 	resultCh := make(chan result, 1)
 	go func() {
 		data, addr, err := RecvFrom(fd)
 		resultCh <- result{data, addr, err}
 	}()
-
 	select {
 	case res := <-resultCh:
 		return res.data, res.addr, res.err
@@ -296,7 +252,6 @@ func recvWithTimeout(fd int, timeout time.Duration) ([]byte, *syscall.SockaddrIn
 		return nil, nil, fmt.Errorf("recv timeout after %v", timeout)
 	}
 }
-
 func getSockAddr(fd int) (*syscall.SockaddrInet4, error) {
 	addr, err := syscall.Getsockname(fd)
 	if err != nil {
@@ -310,101 +265,84 @@ func getSockAddr(fd int) (*syscall.SockaddrInet4, error) {
 }
 
 // Добавить в конец файла:
-
 func TestRawUDPSend(t *testing.T) {
 	udp, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
 	defer func() { _ = udp.Close() }()
-
 	addr := &syscall.SockaddrInet4{Port: 12345, Addr: [4]byte{127, 0, 0, 1}}
 	err = udp.Send([]byte("test"), addr)
 	if err != nil {
 		t.Errorf("Send failed: %v", err)
 	}
 }
-
 func TestRawUDPReceive(t *testing.T) {
 	udp1, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
 	defer func() { _ = udp1.Close() }()
-
 	udp2, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
 	defer func() { _ = udp2.Close() }()
-
 	addr2, err := getSockAddr(udp2.GetFD())
 	if err != nil {
 		t.Fatalf("failed to get address: %v", err)
 	}
-
 	err = udp1.Send([]byte("ping"), addr2)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
-
 	data, _, err := udp2.Receive()
 	if err != nil {
 		t.Fatalf("Receive failed: %v", err)
 	}
-
 	if string(data) != "ping" {
 		t.Errorf("expected 'ping', got %s", data)
 	}
 }
 
 // Add to the end of internal/transport/raw_udp_test.go
-
 func TestRawUDPSendAndReceive(t *testing.T) {
 	udp1, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP 1 failed: %v", err)
 	}
 	defer func() { _ = udp1.Close() }()
-
 	udp2, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP 2 failed: %v", err)
 	}
 	defer func() { _ = udp2.Close() }()
-
 	addr2, err := getSockAddr(udp2.GetFD())
 	if err != nil {
 		t.Fatalf("failed to get address: %v", err)
 	}
-
 	testMsg := []byte("hello from udp1")
 	err = udp1.Send(testMsg, addr2)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
-
 	received, _, err := udp2.Receive()
 	if err != nil {
 		t.Fatalf("Receive failed: %v", err)
 	}
-
 	if string(received) != string(testMsg) {
 		t.Errorf("expected %q, got %q", testMsg, received)
 	}
 }
-
 func TestRawUDPClose(t *testing.T) {
 	udp, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
-
 	err = udp.Close()
 	if err != nil {
 		t.Errorf("Close failed: %v", err)
 	}
-
 	// Second close - may return error, that's fine
 	_ = udp.Close()
 }
@@ -414,7 +352,6 @@ func TestSendToInvalidFD(t *testing.T) {
 		t.Error("expected error for invalid FD")
 	}
 }
-
 func TestCloseSocketInvalid(t *testing.T) {
 	// Closing invalid FD should return nil (no error)
 	err := CloseSocket(-1)
@@ -422,7 +359,6 @@ func TestCloseSocketInvalid(t *testing.T) {
 		t.Errorf("expected nil error for invalid FD, got %v", err)
 	}
 }
-
 func TestGetSockAddr(t *testing.T) {
 	udp, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
@@ -437,7 +373,6 @@ func TestGetSockAddr(t *testing.T) {
 		t.Error("expected non-zero port")
 	}
 }
-
 func TestGetSockAddrClosed(t *testing.T) {
 	udp, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {

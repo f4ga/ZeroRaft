@@ -4,28 +4,30 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package main
 
 import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
+	_ "net/http/pprof" // enable pprof endpoints
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
-
 	"zeroraft/internal/client"
+	"zeroraft/internal/codec"
 	"zeroraft/internal/raft"
+	"zeroraft/internal/transport"
 )
 
 func main() {
@@ -33,8 +35,9 @@ func main() {
 	addr := flag.String("addr", "", "listen address (e.g., 127.0.0.1:8001)")
 	peersStr := flag.String("peers", "", "comma-separated list of peers (format: id=addr,id=addr)")
 	dataDir := flag.String("data-dir", "/tmp/zeroraft", "data directory for persistence")
+	pcapFile := flag.String("pcap", "", "path to PCAP file for packet capture (optional)")
+	pprofAddr := flag.String("pprof", ":6060", "pprof server address (e.g., :6060)")
 	flag.Parse()
-
 	if *id == 0 {
 		log.Fatal("--id is required")
 	}
@@ -44,7 +47,6 @@ func main() {
 	if *peersStr == "" {
 		log.Fatal("--peers is required")
 	}
-
 	// Parse peers
 	peers, err := parsePeers(*peersStr)
 	if err != nil {
@@ -53,45 +55,66 @@ func main() {
 	if _, ok := peers[*id]; !ok {
 		log.Fatalf("node %d not found in peers list", *id)
 	}
-
 	// Create data directory
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
 		log.Fatalf("failed to create data directory: %v", err)
 	}
-
+	// Start pprof server (RT-28)
+	go func() {
+		log.Printf("Starting pprof server on %s", *pprofAddr)
+		if err := http.ListenAndServe(*pprofAddr, nil); err != nil {
+			log.Printf("pprof server error: %v", err)
+		}
+	}()
+	// Initialize PCAP writer if requested (BS-04)
+	var pcapWriter *transport.PcapWriter
+	if *pcapFile != "" {
+		pw, err := transport.NewPcapWriter(*pcapFile)
+		if err != nil {
+			log.Fatalf("failed to create PCAP file: %v", err)
+		}
+		pcapWriter = pw
+		log.Printf("PCAP recording enabled, writing to %s", *pcapFile)
+	}
 	// Create send function for raft (interface{} type)
 	raftSendFunc := func(addr string, msg interface{}) error {
+		if pcapWriter != nil {
+			// Record the message to PCAP (best-effort)
+			if data, err := codec.Encode(msg); err == nil {
+				_ = pcapWriter.WritePacket(data)
+			}
+		}
 		return fmt.Errorf("raft transport not implemented yet (would send to %s: %+v)", addr, msg)
 	}
-
 	// Create Raft node
 	node := raft.NewRaftNode(*id, peers, *dataDir, raftSendFunc)
 	node.Start()
-
 	// Create send function for CLI ([]byte type)
 	cliSendFunc := func(addr string, data []byte) error {
+		if pcapWriter != nil {
+			_ = pcapWriter.WritePacket(data)
+		}
 		return fmt.Errorf("cli transport not implemented yet (would send to %s: %s)", addr, string(data))
 	}
-
 	// Create CLI
 	cli := client.NewCLI(node, cliSendFunc)
-
 	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
 		fmt.Println("\nShutting down...")
+		if pcapWriter != nil {
+			_ = pcapWriter.Close()
+		}
 		node.Stop()
 		os.Exit(0)
 	}()
-
 	// Run CLI
 	if err := cli.Run(); err != nil {
 		log.Fatalf("CLI error: %v", err)
 	}
 }
-
 func parsePeers(peersStr string) (map[int]string, error) {
 	peers := make(map[int]string)
 	parts := strings.Split(peersStr, ",")
