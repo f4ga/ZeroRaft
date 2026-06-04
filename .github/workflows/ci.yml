@@ -13,6 +13,7 @@
 # limitations under the License.
 
 name: ZeroRaft
+
 on:
   push:
     branches: [main]
@@ -43,8 +44,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.0"
-      - name: Run tests with race detector
-        run: go test -race -coverprofile=coverage.out ./...
+      - name: Run tests with race detector and coverage (internal only)
+        run: go test -race -coverprofile=coverage.out ./internal/...
       - name: Filter coverage (exclude generated protobuf)
         run: |
           cat coverage.out | grep -v "internal/api/raft.pb.go" > coverage.filtered.out

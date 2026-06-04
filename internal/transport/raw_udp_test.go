@@ -316,7 +316,7 @@ func TestRawUDPSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
-	defer udp.Close()
+	defer func() { _ = udp.Close() }()
 
 	addr := &syscall.SockaddrInet4{Port: 12345, Addr: [4]byte{127, 0, 0, 1}}
 	err = udp.Send([]byte("test"), addr)
@@ -330,13 +330,13 @@ func TestRawUDPReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
-	defer udp1.Close()
+	defer func() { _ = udp1.Close() }()
 
 	udp2, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
-	defer udp2.Close()
+	defer func() { _ = udp2.Close() }()
 
 	addr2, err := getSockAddr(udp2.GetFD())
 	if err != nil {
@@ -365,13 +365,13 @@ func TestRawUDPSendAndReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRawUDP 1 failed: %v", err)
 	}
-	defer udp1.Close()
+	defer func() { _ = udp1.Close() }()
 
 	udp2, err := NewRawUDP("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("NewRawUDP 2 failed: %v", err)
 	}
-	defer udp2.Close()
+	defer func() { _ = udp2.Close() }()
 
 	addr2, err := getSockAddr(udp2.GetFD())
 	if err != nil {
@@ -428,7 +428,7 @@ func TestGetSockAddr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRawUDP failed: %v", err)
 	}
-	defer udp.Close()
+	defer func() { _ = udp.Close() }()
 	addr, err := udp.GetSockAddr()
 	if err != nil {
 		t.Fatalf("GetSockAddr failed: %v", err)
