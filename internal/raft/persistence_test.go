@@ -144,3 +144,12 @@ func TestIntegrationWithRaftNode(t *testing.T) {
 		t.Fatalf("state not recovered after restart: term=%d votedFor=%d", newNode.currentTerm, newNode.votedFor)
 	}
 }
+
+func TestSaveStateInvalidDir(t *testing.T) {
+	// Use a path that cannot be created (e.g., on a read-only filesystem or invalid path)
+	// On Linux, /proc/self/ is a valid dir but we can't write to it
+	err := SaveState("/nonexistent-parent-dir-12345/state", PersistentState{CurrentTerm: 1, VotedFor: 1})
+	if err == nil {
+		t.Error("expected error when saving to invalid directory")
+	}
+}

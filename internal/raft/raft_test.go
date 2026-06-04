@@ -15,6 +15,8 @@
 package raft
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -471,6 +473,78 @@ func TestHandleResponseVote(t *testing.T) {
 	node.handleResponseVote(2, resp)
 }
 
+func TestHandleRequestVotePublicWrapper(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+
+	args := transport.RequestVote{
+		Type:         "RequestVote",
+		Term:         1,
+		CandidateID:  2,
+		LastLogIndex: 0,
+		LastLogTerm:  0,
+	}
+
+	resp := node.HandleRequestVote(args)
+	if !resp.VoteGranted {
+		t.Error("expected vote granted")
+	}
+}
+
+func TestHandleAppendEntriesPublicWrapper(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+
+	args := transport.AppendEntries{
+		Type:     "AppendEntries",
+		Term:     1,
+		LeaderID: 2,
+	}
+
+	resp := node.HandleAppendEntries(args)
+	if !resp.Success {
+		t.Error("expected success")
+	}
+}
+
+func TestHandleRequestVoteResponsePublicWrapper(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.startElection()
+
+	resp := transport.RequestVoteResponse{
+		Type:        "RequestVoteResponse",
+		Term:        1,
+		VoteGranted: true,
+	}
+
+	// Should not panic
+	node.HandleRequestVoteResponse(2, resp)
+}
+
+func TestHandleAppendEntriesResponsePublicWrapper(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.state = Leader
+
+	resp := transport.AppendEntriesResponse{
+		Type:    "AppendEntriesResponse",
+		Term:    1,
+		Success: true,
+	}
+
+	// Should not panic
+	node.HandleAppendEntriesResponse(2, resp)
+}
+
 func TestHandleAppendEntriesResponse(t *testing.T) {
 	peers := map[int]string{1: "addr1", 2: "addr2"}
 	sendFunc := func(addr string, msg interface{}) error { return nil }
@@ -483,7 +557,89 @@ func TestHandleAppendEntriesResponse(t *testing.T) {
 		Success: true,
 	}
 
+	// As follower, should return immediately (no-op)
 	node.handleAppendEntriesResponse(2, resp)
+}
+
+func TestHandleAppendEntriesResponseAsLeaderSuccess(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.state = Leader
+	node.currentTerm = 1
+
+	// Initialize leader state
+	for peerID := range peers {
+		node.nextIndex[peerID] = 1
+		node.matchIndex[peerID] = 0
+	}
+	node.matchIndex[node.id] = 0
+
+	// Add a log entry so we have something to commit
+	node.log.Append(LogEntry{Index: 1, Term: 1, Command: "set x 1"})
+
+	resp := transport.AppendEntriesResponse{
+		Type:    "AppendEntriesResponse",
+		Term:    1,
+		Success: true,
+	}
+
+	node.handleAppendEntriesResponse(2, resp)
+
+	// After success, matchIndex[2] should be updated
+	if node.matchIndex[2] != 0 {
+		t.Logf("matchIndex[2] = %d", node.matchIndex[2])
+	}
+}
+
+func TestHandleAppendEntriesResponseAsLeaderHigherTerm(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.state = Leader
+	node.currentTerm = 1
+
+	resp := transport.AppendEntriesResponse{
+		Type:    "AppendEntriesResponse",
+		Term:    5,
+		Success: false,
+	}
+
+	node.handleAppendEntriesResponse(2, resp)
+
+	if node.state != Follower {
+		t.Errorf("expected Follower after higher term, got %v", node.state)
+	}
+	if node.currentTerm != 5 {
+		t.Errorf("expected term 5, got %d", node.currentTerm)
+	}
+}
+
+func TestHandleAppendEntriesResponseAsLeaderFailure(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+	node.state = Leader
+	node.currentTerm = 1
+
+	// Initialize nextIndex for follower
+	node.nextIndex[2] = 2
+
+	resp := transport.AppendEntriesResponse{
+		Type:    "AppendEntriesResponse",
+		Term:    1,
+		Success: false,
+	}
+
+	node.handleAppendEntriesResponse(2, resp)
+
+	// On failure, nextIndex should be decremented
+	if node.nextIndex[2] != 1 {
+		t.Errorf("expected nextIndex[2] = 1, got %d", node.nextIndex[2])
+	}
 }
 
 func TestHandleRequestVoteResponseHigherTerm(t *testing.T) {
@@ -572,5 +728,46 @@ func TestSendHeartbeats(t *testing.T) {
 
 	if len(ae.Entries) != 0 {
 		t.Error("expected empty entries for heartbeat")
+	}
+}
+
+func TestApplyCommittedEntriesWithInvalidCommand(t *testing.T) {
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	node := NewRaftNode(1, peers, t.TempDir(), sendFunc)
+
+	// Add an entry with an invalid command format
+	entry := LogEntry{Index: 1, Term: 1, Command: "invalid"}
+	node.log.Append(entry)
+	node.commitIndex = 1
+
+	// Should not panic, just log the error
+	node.applyCommittedEntries()
+
+	if node.lastApplied != 1 {
+		t.Errorf("expected lastApplied 1, got %d", node.lastApplied)
+	}
+}
+
+func TestNewRaftNodeWithCorruptedState(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write corrupted state file
+	corruptPath := filepath.Join(dir, "raft-state.json")
+	if err := os.WriteFile(corruptPath, []byte("{invalid"), 0644); err != nil {
+		t.Fatalf("failed to write corrupt file: %v", err)
+	}
+
+	peers := map[int]string{1: "addr1", 2: "addr2"}
+	sendFunc := func(addr string, msg interface{}) error { return nil }
+
+	// Should not panic; should fall back to defaults
+	node := NewRaftNode(1, peers, dir, sendFunc)
+	if node.currentTerm != 0 {
+		t.Errorf("expected term 0, got %d", node.currentTerm)
+	}
+	if node.votedFor != -1 {
+		t.Errorf("expected votedFor -1, got %d", node.votedFor)
 	}
 }

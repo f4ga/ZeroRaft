@@ -368,6 +368,39 @@ func TestGetMessageType(t *testing.T) {
 	}
 }
 
+func TestDecodeInvalidJSON(t *testing.T) {
+	// Length prefix says valid length, but JSON is invalid
+	data := make([]byte, 12)
+	binary.BigEndian.PutUint32(data[:4], 8)
+	copy(data[4:], `{invalid`)
+	_, err := Decode(data)
+	if err == nil {
+		t.Error("Expected error for invalid JSON, got nil")
+	}
+}
+
+func TestDecodeMissingTypeField(t *testing.T) {
+	// Valid JSON but missing "type" field
+	data := make([]byte, 10)
+	binary.BigEndian.PutUint32(data[:4], 6)
+	copy(data[4:], `{"x":1}`)
+	_, err := Decode(data)
+	if err == nil {
+		t.Error("Expected error for missing type field, got nil")
+	}
+}
+
+func TestDecodeUnknownType(t *testing.T) {
+	// Valid JSON with unknown type
+	data := make([]byte, 20)
+	binary.BigEndian.PutUint32(data[:4], 16)
+	copy(data[4:], `{"type":"Unknown"}`)
+	_, err := Decode(data)
+	if err == nil {
+		t.Error("Expected error for unknown type, got nil")
+	}
+}
+
 func TestGetMessageTypeInvalid(t *testing.T) {
 	// Too short data
 	_, err := GetMessageType([]byte{0, 0, 1})

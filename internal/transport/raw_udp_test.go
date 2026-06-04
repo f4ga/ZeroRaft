@@ -357,3 +357,95 @@ func TestRawUDPReceive(t *testing.T) {
 		t.Errorf("expected 'ping', got %s", data)
 	}
 }
+
+// Add to the end of internal/transport/raw_udp_test.go
+
+func TestRawUDPSendAndReceive(t *testing.T) {
+	udp1, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP 1 failed: %v", err)
+	}
+	defer udp1.Close()
+
+	udp2, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP 2 failed: %v", err)
+	}
+	defer udp2.Close()
+
+	addr2, err := getSockAddr(udp2.GetFD())
+	if err != nil {
+		t.Fatalf("failed to get address: %v", err)
+	}
+
+	testMsg := []byte("hello from udp1")
+	err = udp1.Send(testMsg, addr2)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	received, _, err := udp2.Receive()
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+
+	if string(received) != string(testMsg) {
+		t.Errorf("expected %q, got %q", testMsg, received)
+	}
+}
+
+func TestRawUDPClose(t *testing.T) {
+	udp, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP failed: %v", err)
+	}
+
+	err = udp.Close()
+	if err != nil {
+		t.Errorf("Close failed: %v", err)
+	}
+
+	// Second close - may return error, that's fine
+	_ = udp.Close()
+}
+func TestSendToInvalidFD(t *testing.T) {
+	err := SendTo(-1, []byte("test"), &syscall.SockaddrInet4{Port: 1234})
+	if err == nil {
+		t.Error("expected error for invalid FD")
+	}
+}
+
+func TestCloseSocketInvalid(t *testing.T) {
+	// Closing invalid FD should return nil (no error)
+	err := CloseSocket(-1)
+	if err != nil {
+		t.Errorf("expected nil error for invalid FD, got %v", err)
+	}
+}
+
+func TestGetSockAddr(t *testing.T) {
+	udp, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP failed: %v", err)
+	}
+	defer udp.Close()
+	addr, err := udp.GetSockAddr()
+	if err != nil {
+		t.Fatalf("GetSockAddr failed: %v", err)
+	}
+	if addr.Port == 0 {
+		t.Error("expected non-zero port")
+	}
+}
+
+func TestGetSockAddrClosed(t *testing.T) {
+	udp, err := NewRawUDP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRawUDP failed: %v", err)
+	}
+	_ = udp.Close()
+	_, err = udp.GetSockAddr()
+	if err == nil {
+		t.Error("expected error on closed socket")
+	}
+}

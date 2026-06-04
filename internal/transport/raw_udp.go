@@ -131,3 +131,18 @@ func (r *RawUDP) Close() error {
 func (r *RawUDP) GetFD() int {
 	return r.fd
 }
+
+// Add to internal/transport/raw_udp.go
+
+// GetSockAddr retrieves local address of socket (exported for testing)
+func (r *RawUDP) GetSockAddr() (*syscall.SockaddrInet4, error) {
+	addr, err := syscall.Getsockname(r.fd)
+	if err != nil {
+		return nil, err
+	}
+	inet4, ok := addr.(*syscall.SockaddrInet4)
+	if !ok {
+		return nil, fmt.Errorf("unexpected socket address type: %T", addr)
+	}
+	return inet4, nil
+}
