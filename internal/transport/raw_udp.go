@@ -20,6 +20,29 @@ import (
 	"syscall"
 )
 
+// ResolveAddr parses "host:port" into *syscall.SockaddrInet4.
+func ResolveAddr(addrStr string) (*syscall.SockaddrInet4, error) {
+	host, portStr, err := net.SplitHostPort(addrStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port: %v", err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP: %s", host)
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return nil, fmt.Errorf("non-IPv4 address: %s", host)
+	}
+	var addr4 [4]byte
+	copy(addr4[:], ip4)
+	return &syscall.SockaddrInet4{Port: port, Addr: addr4}, nil
+}
+
 func NewRawSocket(addr string) (int, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {

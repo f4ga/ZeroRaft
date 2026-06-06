@@ -521,3 +521,15 @@ func (rn *RaftNode) GetPeerAddr(id int) string {
 	defer rn.mu.RUnlock()
 	return rn.peers[id]
 }
+
+// FindPeerIDByAddr returns peer ID by address, or -1 if not found.
+func (rn *RaftNode) FindPeerIDByAddr(addr string) int {
+	rn.mu.RLock()
+	defer rn.mu.RUnlock()
+	for id, peerAddr := range rn.peers {
+		if peerAddr == addr {
+			return id
+		}
+	}
+	return -1
+}

@@ -4,13 +4,14 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//  http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package main
 
 import (
@@ -24,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
 	"zeroraft/internal/client"
 	"zeroraft/internal/codec"
 	"zeroraft/internal/raft"
@@ -38,6 +40,7 @@ func main() {
 	pcapFile := flag.String("pcap", "", "path to PCAP file for packet capture (optional)")
 	pprofAddr := flag.String("pprof", ":6060", "pprof server address (e.g., :6060)")
 	flag.Parse()
+
 	if *id == 0 {
 		log.Fatal("--id is required")
 	}
@@ -47,18 +50,18 @@ func main() {
 	if *peersStr == "" {
 		log.Fatal("--peers is required")
 	}
+
 	// Parse peers
 	peers, err := parsePeers(*peersStr)
 	if err != nil {
 		log.Fatalf("failed to parse peers: %v", err)
 	}
-	if _, ok := peers[*id]; !ok {
-		log.Fatalf("node %d not found in peers list", *id)
-	}
+
 	// Create data directory
 	if err := os.MkdirAll(*dataDir, 0755); err != nil {
 		log.Fatalf("failed to create data directory: %v", err)
 	}
+
 	// Start pprof server (RT-28)
 	go func() {
 		log.Printf("Starting pprof server on %s", *pprofAddr)
@@ -66,6 +69,7 @@ func main() {
 			log.Printf("pprof server error: %v", err)
 		}
 	}()
+
 	// Initialize PCAP writer if requested (BS-04)
 	var pcapWriter *transport.PcapWriter
 	if *pcapFile != "" {
@@ -76,28 +80,109 @@ func main() {
 		pcapWriter = pw
 		log.Printf("PCAP recording enabled, writing to %s", *pcapFile)
 	}
-	// Create send function for raft (interface{} type)
-	raftSendFunc := func(addr string, msg interface{}) error {
-		if pcapWriter != nil {
-			// Record the message to PCAP (best-effort)
-			if data, err := codec.Encode(msg); err == nil {
-				_ = pcapWriter.WritePacket(data)
-			}
-		}
-		return fmt.Errorf("raft transport not implemented yet (would send to %s: %+v)", addr, msg)
+
+	// Create raw UDP socket (RT-01, RT-02)
+	fd, err := transport.NewRawSocket(*addr)
+	if err != nil {
+		log.Fatalf("failed to create UDP socket: %v", err)
 	}
-	// Create Raft node
-	node := raft.NewRaftNode(*id, peers, *dataDir, raftSendFunc)
-	node.Start()
-	// Create send function for CLI ([]byte type)
-	cliSendFunc := func(addr string, data []byte) error {
+	defer func() {
+		if err := transport.CloseSocket(fd); err != nil {
+			log.Printf("error closing socket: %v", err)
+		}
+	}()
+	log.Printf("UDP socket created on %s (fd=%d)", *addr, fd)
+
+	// raftSendFunc sends an RPC message to a peer over UDP.
+	raftSendFunc := func(peerAddr string, msg interface{}) error {
+		raddr, err := transport.ResolveAddr(peerAddr)
+		if err != nil {
+			return fmt.Errorf("resolve addr %s: %v", peerAddr, err)
+		}
+		data, err := codec.Encode(msg)
+		if err != nil {
+			return fmt.Errorf("encode: %v", err)
+		}
 		if pcapWriter != nil {
 			_ = pcapWriter.WritePacket(data)
 		}
-		return fmt.Errorf("cli transport not implemented yet (would send to %s: %s)", addr, string(data))
+		return transport.SendTo(fd, data, raddr)
 	}
+
+	// Create Raft node
+	node := raft.NewRaftNode(*id, peers, *dataDir, raftSendFunc)
+	node.Start()
+
+	// recvLoop receives UDP datagrams and dispatches them to Raft handlers.
+	go func() {
+		for {
+			data, from, err := transport.RecvFrom(fd)
+			if err != nil {
+				// Temporary error, continue
+				continue
+			}
+			if pcapWriter != nil {
+				_ = pcapWriter.WritePacket(data)
+			}
+
+			// Build sender address string for responses
+			fromAddr := fmt.Sprintf("%d.%d.%d.%d:%d", from.Addr[0], from.Addr[1], from.Addr[2], from.Addr[3], from.Port)
+
+			// Try to decode as RPC message first
+			msg, err := codec.Decode(data)
+			if err != nil {
+				// Not an RPC message — might be a CLI text command forwarded to leader.
+				// Try to handle as raw text command (SET key value).
+				text := strings.TrimSpace(string(data))
+				if strings.HasPrefix(text, "SET ") {
+					rest := strings.TrimPrefix(text, "SET ")
+					parts := strings.SplitN(rest, " ", 2)
+					if len(parts) == 2 {
+						_, err := node.Submit(fmt.Sprintf("set %s %s", parts[0], parts[1]))
+						if err != nil {
+							log.Printf("error processing forwarded SET from %s: %v", fromAddr, err)
+						}
+					}
+				}
+				continue
+			}
+
+			// Dispatch RPC message by type
+			switch m := msg.(type) {
+			case codec.RequestVote:
+				resp := node.HandleRequestVote(m)
+				_ = raftSendFunc(fromAddr, resp)
+			case codec.RequestVoteResponse:
+				// Find peer ID by address for the response handler
+				peerID := node.FindPeerIDByAddr(fromAddr)
+				node.HandleRequestVoteResponse(peerID, m)
+			case codec.AppendEntries:
+				resp := node.HandleAppendEntries(m)
+				_ = raftSendFunc(fromAddr, resp)
+			case codec.AppendEntriesResponse:
+				peerID := node.FindPeerIDByAddr(fromAddr)
+				node.HandleAppendEntriesResponse(peerID, m)
+			default:
+				log.Printf("unknown message type from %s", fromAddr)
+			}
+		}
+	}()
+
+	// cliSendFunc sends raw text commands to a peer over UDP (for leader forwarding).
+	cliSendFunc := func(addr string, data []byte) error {
+		raddr, err := transport.ResolveAddr(addr)
+		if err != nil {
+			return fmt.Errorf("resolve addr %s: %v", addr, err)
+		}
+		if pcapWriter != nil {
+			_ = pcapWriter.WritePacket(data)
+		}
+		return transport.SendTo(fd, data, raddr)
+	}
+
 	// Create CLI
 	cli := client.NewCLI(node, cliSendFunc)
+
 	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -110,11 +195,13 @@ func main() {
 		node.Stop()
 		os.Exit(0)
 	}()
+
 	// Run CLI
 	if err := cli.Run(); err != nil {
 		log.Fatalf("CLI error: %v", err)
 	}
 }
+
 func parsePeers(peersStr string) (map[int]string, error) {
 	peers := make(map[int]string)
 	parts := strings.Split(peersStr, ",")
