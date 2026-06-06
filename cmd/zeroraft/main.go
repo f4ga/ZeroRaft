@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"zeroraft/internal/client"
 	"zeroraft/internal/codec"
@@ -39,7 +40,41 @@ func main() {
 	dataDir := flag.String("data-dir", "/tmp/zeroraft", "data directory for persistence")
 	pcapFile := flag.String("pcap", "", "path to PCAP file for packet capture (optional)")
 	pprofAddr := flag.String("pprof", ":6060", "pprof server address (e.g., :6060)")
+	healthFlag := flag.Bool("health", false, "healthcheck mode: exit 0 if healthy, 1 otherwise")
 	flag.Parse()
+
+	if *healthFlag {
+		// Healthcheck mode: create node, check health, exit.
+		// We need peers and addr to create a node, but in healthcheck mode
+		// we only check local state. Use defaults if not provided.
+		if *addr == "" {
+			*addr = "0.0.0.0:0"
+		}
+		if *peersStr == "" {
+			*peersStr = ""
+		}
+		if *id == 0 {
+			*id = 1
+		}
+		peers, err := parsePeers(*peersStr)
+		if err != nil {
+			peers = map[int]string{}
+		}
+		if err := os.MkdirAll(*dataDir, 0755); err != nil {
+			os.Exit(1)
+		}
+		sendFunc := func(addr string, msg interface{}) error { return nil }
+		node := raft.NewRaftNode(*id, peers, *dataDir, sendFunc)
+		node.Start()
+		// Give the node a moment to initialize
+		time.Sleep(50 * time.Millisecond)
+		if node.IsHealthy() {
+			node.Stop()
+			os.Exit(0)
+		}
+		node.Stop()
+		os.Exit(1)
+	}
 
 	if *id == 0 {
 		log.Fatal("--id is required")
@@ -198,7 +233,14 @@ func main() {
 
 	// Run CLI
 	if err := cli.Run(); err != nil {
-		log.Fatalf("CLI error: %v", err)
+		log.Printf("CLI error: %v", err)
+		if pcapWriter != nil {
+			_ = pcapWriter.Close()
+		}
+		node.Stop()
+		_ = transport.CloseSocket(fd)
+		//nolint:gocritic // resources already closed explicitly
+		os.Exit(1)
 	}
 }
 

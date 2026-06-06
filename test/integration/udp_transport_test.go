@@ -47,7 +47,9 @@ func TestRealUDPTransport(t *testing.T) {
 			t.Fatalf("failed to create temp dir for node %d: %v", id, err)
 		}
 		dataDirs[id] = dir
-		t.Cleanup(func() { os.RemoveAll(dir) })
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		t.Logf("data dir for node %d: %s", id, dir)
+		t.Logf("peer address for node %d: %s", id, peers[id])
 	}
 
 	// Create sockets and nodes
@@ -63,8 +65,8 @@ func TestRealUDPTransport(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create socket for node %d: %v", id, err)
 		}
-		t.Cleanup(func() { transport.CloseSocket(fd) })
-
+		t.Cleanup(func() { _ = transport.CloseSocket(fd) })
+		t.Logf("socket for node %d: %d", id, fd)
 		// resolveAddr helper using net package (allowed in tests)
 		resolveAddr := func(addrStr string) (*syscall.SockaddrInet4, error) {
 			host, portStr, err := net.SplitHostPort(addrStr)

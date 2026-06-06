@@ -18,38 +18,44 @@ services:
   node1:
     build: .
     image: zeroraft:latest
-    command: ["--id", "1", "--addr", "node1:9000", "--peers", "node2:9000,node3:9000"]
+    command: [ "--id", "1", "--addr", "node1:9000", "--peers", "node2:9000,node3:9000" ]
     networks:
       - zeroraft-net
     healthcheck:
-      test: ["CMD", "true"]
-      interval: 10s
-      timeout: 5s
+      test: [ "CMD", "/usr/local/bin/zeroraft", "--health" ]
+      interval: 5s
+      timeout: 2s
+      start_period: 3s
       retries: 3
+    restart: unless-stopped
 
   node2:
     build: .
     image: zeroraft:latest
-    command: ["--id", "2", "--addr", "node2:9000", "--peers", "node1:9000,node3:9000"]
+    command: [ "--id", "2", "--addr", "node2:9000", "--peers", "node1:9000,node3:9000" ]
     networks:
       - zeroraft-net
     healthcheck:
-      test: ["CMD", "true"]
-      interval: 10s
-      timeout: 5s
+      test: [ "CMD", "/usr/local/bin/zeroraft", "--health" ]
+      interval: 5s
+      timeout: 2s
+      start_period: 3s
       retries: 3
+    restart: unless-stopped
 
   node3:
     build: .
     image: zeroraft:latest
-    command: ["--id", "3", "--addr", "node3:9000", "--peers", "node1:9000,node2:9000"]
+    command: [ "--id", "3", "--addr", "node3:9000", "--peers", "node1:9000,node2:9000" ]
     networks:
       - zeroraft-net
     healthcheck:
-      test: ["CMD", "true"]
-      interval: 10s
-      timeout: 5s
+      test: [ "CMD", "/usr/local/bin/zeroraft", "--health" ]
+      interval: 5s
+      timeout: 2s
+      start_period: 3s
       retries: 3
+    restart: unless-stopped
 
 networks:
   zeroraft-net:

@@ -533,3 +533,12 @@ func (rn *RaftNode) FindPeerIDByAddr(addr string) int {
 	}
 	return -1
 }
+
+// IsHealthy returns true if the node is not in Candidate state.
+// A node in Candidate state cannot serve clients or participate normally.
+// Used by Docker healthcheck (--health flag).
+func (rn *RaftNode) IsHealthy() bool {
+	rn.mu.RLock()
+	defer rn.mu.RUnlock()
+	return rn.state != Candidate
+}
