@@ -27,6 +27,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"zeroraft/internal/client"
 	"zeroraft/internal/codec"
 	"zeroraft/internal/raft"
@@ -67,7 +69,7 @@ func main() {
 		node := raft.NewRaftNode(*id, peers, *dataDir, sendFunc)
 		node.Start()
 		// Give the node a moment to initialize
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 		if node.IsHealthy() {
 			node.Stop()
 			os.Exit(0)
@@ -215,9 +217,6 @@ func main() {
 		return transport.SendTo(fd, data, raddr)
 	}
 
-	// Create CLI
-	cli := client.NewCLI(node, cliSendFunc)
-
 	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -231,16 +230,27 @@ func main() {
 		os.Exit(0)
 	}()
 
-	// Run CLI
-	if err := cli.Run(); err != nil {
-		log.Printf("CLI error: %v", err)
-		if pcapWriter != nil {
-			_ = pcapWriter.Close()
+	// Run CLI only in interactive terminal mode.
+	// In non-interactive environments (e.g., Docker containers without a TTY),
+	// cli.Run() would immediately receive EOF on stdin and exit, causing the
+	// process to terminate and Docker to restart the container in a loop.
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		cli := client.NewCLI(node, cliSendFunc)
+		if err := cli.Run(); err != nil {
+			log.Printf("CLI error: %v", err)
+			if pcapWriter != nil {
+				_ = pcapWriter.Close()
+			}
+			node.Stop()
+			_ = transport.CloseSocket(fd)
+			//nolint:gocritic // resources already closed explicitly
+			os.Exit(1)
 		}
-		node.Stop()
-		_ = transport.CloseSocket(fd)
-		//nolint:gocritic // resources already closed explicitly
-		os.Exit(1)
+	} else {
+		log.Println("Running in non-interactive mode (no CLI)")
+		// Block indefinitely — the signal handler above will call os.Exit(0)
+		// on SIGINT/SIGTERM, so this goroutine will never outlive the process.
+		select {}
 	}
 }
 

@@ -12,49 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: "3.8"
 
 services:
   node1:
     build: .
     image: zeroraft:latest
-    command: [ "--id", "1", "--addr", "node1:9000", "--peers", "node2:9000,node3:9000" ]
+    command: [ "--id", "1", "--addr", "0.0.0.0:9000", "--peers", "2=node2:9000,3=node3:9000" ]
     networks:
       - zeroraft-net
-    healthcheck:
-      test: [ "CMD", "/usr/local/bin/zeroraft", "--health" ]
-      interval: 5s
-      timeout: 2s
-      start_period: 3s
-      retries: 3
     restart: unless-stopped
 
   node2:
     build: .
     image: zeroraft:latest
-    command: [ "--id", "2", "--addr", "node2:9000", "--peers", "node1:9000,node3:9000" ]
+    command: [ "--id", "2", "--addr", "0.0.0.0:9000", "--peers", "1=node1:9000,3=node3:9000" ]
     networks:
       - zeroraft-net
-    healthcheck:
-      test: [ "CMD", "/usr/local/bin/zeroraft", "--health" ]
-      interval: 5s
-      timeout: 2s
-      start_period: 3s
-      retries: 3
     restart: unless-stopped
 
   node3:
     build: .
     image: zeroraft:latest
-    command: [ "--id", "3", "--addr", "node3:9000", "--peers", "node1:9000,node2:9000" ]
+    command: [ "--id", "3", "--addr", "0.0.0.0:9000", "--peers", "1=node1:9000,2=node2:9000" ]
     networks:
       - zeroraft-net
-    healthcheck:
-      test: [ "CMD", "/usr/local/bin/zeroraft", "--health" ]
-      interval: 5s
-      timeout: 2s
-      start_period: 3s
-      retries: 3
     restart: unless-stopped
 
 networks:

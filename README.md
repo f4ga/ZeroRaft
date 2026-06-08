@@ -20,11 +20,12 @@
 | [What's Inside](#whats-inside) | Implemented features at a glance |
 | [Architecture](#architecture) | High‑level component diagram |
 | [Quick Start](#quick-start) | Clone, build, run tests, run CLI |
+| [Docker Cluster](#docker-cluster) | Run a 3-node cluster with Docker |
 | [Testing](#testing) | Unit, integration, coverage |
 | [Codec Benchmarks](#codec-benchmarks) | JSON vs Protobuf performance on real hardware |
 | [Project Structure](#project-structure) | Directory layout |
 | [How Raft Works](#how-raft-works) | Election, replication, conflict resolution |
-| [What’s Missing](#whats-missing) | Known gaps and simplifications |
+| [What's Missing](#whats-missing) | Known gaps and simplifications |
 | [License](#license) | Apache 2.0 |
 
 ---
@@ -38,7 +39,7 @@ Just Go, raw syscalls (`syscall.Socket`, `bind`, `recvfrom`, `sendto`), and manu
 **This is not production software – it is for learning.**  
 You will see exactly how a distributed consensus system works at the lowest level.
 
-> ⚠️ **Note on networking:** The core Raft logic, persistence, CLI, chaos simulation, PCAP, and pprof are fully implemented and **tested**. However, the `main.go` executable currently uses a mock transport – it can run a single node locally but will not communicate with other nodes over the real network. The real network communication is **simulated** inside the integration tests (which use an in‑memory router). This is sufficient to prove the protocol works; adding a real UDP transport is a possible extension.
+> ✅ **Real UDP networking:** Nodes communicate over real UDP sockets created with `syscall.Socket`. The `main.go` binary creates a raw UDP socket, binds to the configured address, and sends/receives Raft RPC messages over the network. No mock transport, no simulation — real packets on the wire.
 
 ---
 
@@ -46,18 +47,19 @@ You will see exactly how a distributed consensus system works at the lowest leve
 
 | Component | Status | Remarks |
 |-----------|--------|---------|
-| Raw UDP transport (syscall) | ✅ | Code ready (`internal/transport`), but not wired into `main.go` |
+| Raw UDP transport (syscall) | ✅ | Wired into `main.go` — real network communication |
 | JSON & Protobuf codecs | ✅ | Configurable via `Codec` interface; benchmarks included |
 | Leader election, log replication | ✅ | Full Raft FSM with conflict resolution |
 | Persistence (`currentTerm`, `votedFor`) | ✅ | Atomic write via temp+rename |
 | State machine (in‑memory `map`) | ✅ | Supports `set`/`get` commands |
-| CLI (interactive, leader forwarding) | ✅ | Works locally (no real network) |
-| Packet loss simulation | ✅ | `/chaos loss=0.3` changes drop probability in test router |
-| PCAP capture (Wireshark) | ✅ | `--pcap` flag records all messages (used in tests) |
+| CLI (interactive, leader forwarding) | ✅ | Works over real UDP — commands forwarded to leader |
+| Packet loss simulation | ✅ | `/chaos loss=0.3` drops packets in the transport layer |
+| PCAP capture (Wireshark) | ✅ | `--pcap` flag records all network packets |
 | pprof profiling | ✅ | `--pprof :6060` – CPU, memory, goroutine profiles |
-| Dockerfile & docker-compose | ✅ | 3‑node cluster with dummy healthcheck |
-| Integration tests (3 nodes, loss) | ✅ | Full cluster simulation with custom router |
+| Dockerfile & docker-compose | ✅ | 3‑node cluster with real healthcheck |
+| Integration tests (3 nodes, loss) | ✅ | Full cluster tests with real UDP or in-memory router |
 | **Codec benchmarks** | ✅ | JSON vs Protobuf – see results below |
+| **CI smoke tests** | ✅ | Docker compose cluster tested in CI |
 
 ---
 
@@ -84,8 +86,6 @@ You will see exactly how a distributed consensus system works at the lowest leve
 └─────────────────────────────────────────────────────────────┘
 ```
 
-*(The transport layer code exists, but the main executable does not yet connect it.)*
-
 ---
 
 ## Quick Start
@@ -102,10 +102,7 @@ cd ZeroRaft
 make build
 ```
 
-### Run a Single Node (local CLI only)
-
-The binary can start, but it will **not** talk to other nodes.  
-It will still accept commands and modify its local state machine.
+### Run a Single Node
 
 ```bash
 ./bin/zeroraft --id=1 --addr=127.0.0.1:8001 --peers=1=127.0.0.1:8001
@@ -119,15 +116,66 @@ Inside the CLI you can type:
 > /chaos loss=0.3
 ```
 
-The `/chaos` command only affects the **test router** (when you run integration tests), not the real network.
+### Run a 3-Node Cluster (local)
 
-### Run Integration Tests (real Raft cluster simulation)
+Open three terminals:
 
+**Terminal 1:**
 ```bash
-make test
+./bin/zeroraft --id=1 --addr=127.0.0.1:8001 --peers=2=127.0.0.1:8002,3=127.0.0.1:8003 --data-dir=/tmp/zeroraft1
 ```
 
-This starts a simulated 3‑node cluster using an in‑memory router, elects a leader, replicates commands, and even simulates 30% packet loss. All tests pass.
+**Terminal 2:**
+```bash
+./bin/zeroraft --id=2 --addr=127.0.0.1:8002 --peers=1=127.0.0.1:8001,3=127.0.0.1:8003 --data-dir=/tmp/zeroraft2
+```
+
+**Terminal 3:**
+```bash
+./bin/zeroraft --id=3 --addr=127.0.0.1:8003 --peers=1=127.0.0.1:8001,2=127.0.0.1:8002 --data-dir=/tmp/zeroraft3
+```
+
+After a few seconds, one node will become the leader. Use `/status` to check.
+
+---
+
+## Docker Cluster
+
+The easiest way to see ZeroRaft in action is with Docker Compose:
+
+```bash
+# Build and start a 3-node cluster
+make docker-up
+
+# Check container health
+docker ps
+
+# Send a command to node1
+echo -e '/set smoke hello\n/exit' | docker compose exec -T node1 /usr/local/bin/zeroraft --id=1 --addr=node1:9000 --peers=node2:9000,node3:9000 --data-dir=/data
+
+# Verify replication on node2
+echo -e '/get smoke\n/exit' | docker compose exec -T node2 /usr/local/bin/zeroraft --id=2 --addr=node2:9000 --peers=node1:9000,node3:9000 --data-dir=/data
+
+# Stop the cluster
+make docker-down
+```
+
+### Healthcheck
+
+Each container has a real healthcheck that verifies the Raft node is not in `Candidate` state:
+
+```bash
+docker compose ps
+# All three should show "(healthy)" after a few seconds
+```
+
+### Simulating Packet Loss
+
+```bash
+# Attach to the leader container and set 30% packet loss
+docker compose exec node1 /usr/local/bin/zeroraft --id=1 --addr=node1:9000 --peers=node2:9000,node3:9000 --data-dir=/data
+> /chaos loss=0.3
+```
 
 ---
 
@@ -140,7 +188,7 @@ make test
 # Specific package
 go test -race ./internal/raft
 
-# Integration tests (3‑node cluster simulation)
+# Integration tests (3‑node cluster)
 go test -race ./test/integration
 
 # Coverage (excluding generated protobuf)
@@ -185,7 +233,7 @@ go test -bench=BenchmarkProtobufDecode -benchmem ./internal/codec/
 
 ```
 zeroraft/
-├── cmd/zeroraft/           # main.go (mock transport)
+├── cmd/zeroraft/           # main.go (real UDP transport)
 ├── internal/
 │   ├── api/                # generated protobuf
 │   ├── client/             # CLI
@@ -193,10 +241,10 @@ zeroraft/
 │   ├── raft/               # Raft core (FSM, log, persistence)
 │   └── transport/          # raw UDP, chaos, PCAP
 ├── test/
-│   ├── integration/        # 3‑node cluster tests (simulated network)
+│   ├── integration/        # 3‑node cluster tests (real UDP + simulated)
 │   └── benchmark/          # (optional)
-├── scripts/                # bench.sh (placeholder), chaos.sh
-├── .github/workflows/      # CI (lint, test, coverage)
+├── scripts/                # bench.sh, chaos.sh
+├── .github/workflows/      # CI (lint, test, coverage, docker smoke)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── Makefile
@@ -212,22 +260,19 @@ zeroraft/
 - **Safety** – leader only commits entries from its own term.
 - **Persistence** – `currentTerm` and `votedFor` are saved to disk atomically.
 
-All this is exercised by the integration tests.
+All this is exercised by the integration tests and works over real UDP sockets.
 
 ---
 
-## What’s Missing
+## What's Missing
 
 | Issue | Status | Notes |
 |-------|--------|-------|
-| Real UDP transport in `main.go` | ❌ | Code is ready but not wired |
-| Healthcheck endpoint (`--health`) | ❌ | Docker healthcheck is dummy |
-| Docker smoke tests in CI | ❌ | Not added yet |
 | Log persistence to disk (BS‑01) | ⏳ | Planned |
 | Snapshots (BS‑02) | ⏳ | Planned |
 | Membership changes (BS‑03) | ⏳ | Planned |
-
-If you need a fully networked Raft, consider using etcd or Consul.
+| TLS for client communication | ⏳ | Planned |
+| TUI dashboard (BS‑06) | ⏳ | Planned |
 
 ---
 

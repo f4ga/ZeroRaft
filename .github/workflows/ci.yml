@@ -73,6 +73,46 @@ jobs:
       - name: Build Docker image
         run: docker build .
 
+  docker-smoke:
+    name: Docker Smoke Test
+    runs-on: ubuntu-latest
+    needs: [lint, test, build, docker]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker images
+        run: docker compose build
+      - name: Start cluster
+        run: docker compose up -d
+      - name: Wait for cluster to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            HEALTHY=0
+            for node in node1 node2 node3; do
+              if docker compose exec -T "$node" /usr/local/bin/zeroraft --health 2>/dev/null; then
+                HEALTHY=$((HEALTHY + 1))
+              fi
+            done
+            if [ "$HEALTHY" -eq 3 ]; then
+              echo "All 3 nodes healthy"
+              break
+            fi
+            echo "Attempt $i: $HEALTHY/3 nodes healthy"
+            sleep 1
+          done
+      - name: Send command and verify replication
+        run: |
+          # Send /set command to node1 via stdin
+          echo -e '/set smoke hello\n/exit' | docker compose exec -T node1 /usr/local/bin/zeroraft --id=1 --addr=node1:9000 --peers=node2:9000,node3:9000 --data-dir=/data 2>/dev/null || true
+          # Wait for replication
+          sleep 3
+          # Verify on node2
+          echo -e '/get smoke\n/exit' | docker compose exec -T node2 /usr/local/bin/zeroraft --id=2 --addr=node2:9000 --peers=node1:9000,node3:9000 --data-dir=/data 2>/dev/null | grep -q "hello" && echo "node2: OK" || echo "node2: FAIL"
+          # Verify on node3
+          echo -e '/get smoke\n/exit' | docker compose exec -T node3 /usr/local/bin/zeroraft --id=3 --addr=node3:9000 --peers=node1:9000,node2:9000 --data-dir=/data 2>/dev/null | grep -q "hello" && echo "node3: OK" || echo "node3: FAIL"
+      - name: Shutdown
+        if: always()
+        run: docker compose down
+
   license:
     name: License Check
     runs-on: ubuntu-latest

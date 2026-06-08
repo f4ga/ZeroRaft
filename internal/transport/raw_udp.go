@@ -21,6 +21,7 @@ import (
 )
 
 // ResolveAddr parses "host:port" into *syscall.SockaddrInet4.
+// Supports hostnames (resolves via net.LookupHost).
 func ResolveAddr(addrStr string) (*syscall.SockaddrInet4, error) {
 	host, portStr, err := net.SplitHostPort(addrStr)
 	if err != nil {
@@ -30,10 +31,20 @@ func ResolveAddr(addrStr string) (*syscall.SockaddrInet4, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid port: %v", err)
 	}
+
 	ip := net.ParseIP(host)
 	if ip == nil {
-		return nil, fmt.Errorf("invalid IP: %s", host)
+		// Try to resolve hostname
+		ips, err := net.LookupHost(host)
+		if err != nil || len(ips) == 0 {
+			return nil, fmt.Errorf("cannot resolve host: %s", host)
+		}
+		ip = net.ParseIP(ips[0])
+		if ip == nil {
+			return nil, fmt.Errorf("resolved IP is invalid: %s", ips[0])
+		}
 	}
+
 	ip4 := ip.To4()
 	if ip4 == nil {
 		return nil, fmt.Errorf("non-IPv4 address: %s", host)
@@ -42,7 +53,6 @@ func ResolveAddr(addrStr string) (*syscall.SockaddrInet4, error) {
 	copy(addr4[:], ip4)
 	return &syscall.SockaddrInet4{Port: port, Addr: addr4}, nil
 }
-
 func NewRawSocket(addr string) (int, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
