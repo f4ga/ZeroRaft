@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
@@ -43,12 +44,11 @@ func main() {
 	pcapFile := flag.String("pcap", "", "path to PCAP file for packet capture (optional)")
 	pprofAddr := flag.String("pprof", ":6060", "pprof server address (e.g., :6060)")
 	healthFlag := flag.Bool("health", false, "healthcheck mode: exit 0 if healthy, 1 otherwise")
+	cliFlag := flag.Bool("cli", false, "client mode: read commands from stdin, send via UDP, exit after /exit")
 	flag.Parse()
 
 	if *healthFlag {
 		// Healthcheck mode: create node, check health, exit.
-		// We need peers and addr to create a node, but in healthcheck mode
-		// we only check local state. Use defaults if not provided.
 		if *addr == "" {
 			*addr = "0.0.0.0:0"
 		}
@@ -68,7 +68,6 @@ func main() {
 		sendFunc := func(addr string, msg interface{}) error { return nil }
 		node := raft.NewRaftNode(*id, peers, *dataDir, sendFunc)
 		node.Start()
-		// Give the node a moment to initialize
 		time.Sleep(500 * time.Millisecond)
 		if node.IsHealthy() {
 			node.Stop()
@@ -78,6 +77,92 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *cliFlag {
+		// Client mode: read commands from stdin, send to target node via UDP,
+		// wait for response, print it, and exit after /exit.
+		if *addr == "" {
+			log.Fatal("--addr is required in client mode (target node address)")
+		}
+
+		// Resolve target address
+		targetAddr, err := transport.ResolveAddr(*addr)
+		if err != nil {
+			log.Fatalf("failed to resolve target address: %v", err)
+		}
+
+		// Create a temporary UDP socket bound to a random port
+		clientFd, err := transport.NewRawSocket("0.0.0.0:0")
+		if err != nil {
+			log.Fatalf("failed to create client socket: %v", err)
+		}
+		defer func() {
+			if err := transport.CloseSocket(clientFd); err != nil {
+				log.Printf("error closing client socket: %v", err)
+			}
+		}()
+
+		// Read all stdin commands
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			if line == "/exit" {
+				break
+			}
+
+			// Convert CLI command to protocol command
+			var payload string
+			if strings.HasPrefix(line, "/set ") {
+				parts := strings.SplitN(line[5:], " ", 2)
+				if len(parts) != 2 {
+					fmt.Fprintf(os.Stderr, "Error: invalid /set command\n")
+					continue
+				}
+				payload = fmt.Sprintf("SET %s %s\n", parts[0], parts[1])
+			} else if strings.HasPrefix(line, "/get ") {
+				key := strings.TrimSpace(line[5:])
+				payload = fmt.Sprintf("GET %s\n", key)
+			} else if line == "/status" {
+				payload = "STATUS\n"
+			} else if line == "/leader" {
+				payload = "LEADER\n"
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: unsupported command in client mode: %s\n", line)
+				continue
+			}
+
+			// Send UDP packet to target node
+			if err := transport.SendTo(clientFd, []byte(payload), targetAddr); err != nil {
+				fmt.Fprintf(os.Stderr, "Error sending: %v\n", err)
+				continue
+			}
+
+			// Wait for response with timeout
+			errCh := make(chan error, 1)
+			dataCh := make(chan []byte, 1)
+			go func() {
+				data, _, err := transport.RecvFrom(clientFd)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				dataCh <- data
+			}()
+			select {
+			case data := <-dataCh:
+				fmt.Print(string(data))
+			case err := <-errCh:
+				fmt.Fprintf(os.Stderr, "Error receiving: %v\n", err)
+			case <-time.After(2 * time.Second):
+				fmt.Fprintf(os.Stderr, "Timeout waiting for response\n")
+			}
+		}
+		return
+	}
+
+	// Normal server mode
 	if *id == 0 {
 		log.Fatal("--id is required")
 	}
@@ -151,11 +236,11 @@ func main() {
 	node.Start()
 
 	// recvLoop receives UDP datagrams and dispatches them to Raft handlers.
+	// Also handles plain text commands (SET, GET, STATUS, LEADER) with responses.
 	go func() {
 		for {
 			data, from, err := transport.RecvFrom(fd)
 			if err != nil {
-				// Temporary error, continue
 				continue
 			}
 			if pcapWriter != nil {
@@ -168,9 +253,9 @@ func main() {
 			// Try to decode as RPC message first
 			msg, err := codec.Decode(data)
 			if err != nil {
-				// Not an RPC message — might be a CLI text command forwarded to leader.
-				// Try to handle as raw text command (SET key value).
+				// Not an RPC message — try plain text command.
 				text := strings.TrimSpace(string(data))
+
 				if strings.HasPrefix(text, "SET ") {
 					rest := strings.TrimPrefix(text, "SET ")
 					parts := strings.SplitN(rest, " ", 2)
@@ -180,6 +265,35 @@ func main() {
 							log.Printf("error processing forwarded SET from %s: %v", fromAddr, err)
 						}
 					}
+				} else if strings.HasPrefix(text, "GET ") {
+					key := strings.TrimSpace(text[4:])
+					val, ok := node.GetStateMachineValue(key)
+					resp := fmt.Sprintf("value: %s\n", val)
+					if !ok {
+						resp = "not found\n"
+					}
+					go func(addr string, respData []byte) {
+						raddr, _ := transport.ResolveAddr(addr)
+						_ = transport.SendTo(fd, respData, raddr)
+					}(fromAddr, []byte(resp))
+				} else if text == "STATUS" {
+					state := node.GetState()
+					term := node.GetCurrentTerm()
+					leaderID := node.GetLeaderID()
+					commitIndex := node.GetCommitIndex()
+					resp := fmt.Sprintf("State: %s\nTerm: %d\nLeader: node %d\nCommit Index: %d\n", state, term, leaderID, commitIndex)
+					go func(addr string, respData []byte) {
+						raddr, _ := transport.ResolveAddr(addr)
+						_ = transport.SendTo(fd, respData, raddr)
+					}(fromAddr, []byte(resp))
+				} else if text == "LEADER" {
+					leaderID := node.GetLeaderID()
+					leaderAddr := node.GetPeerAddr(leaderID)
+					resp := fmt.Sprintf("Leader: node %d (%s)\n", leaderID, leaderAddr)
+					go func(addr string, respData []byte) {
+						raddr, _ := transport.ResolveAddr(addr)
+						_ = transport.SendTo(fd, respData, raddr)
+					}(fromAddr, []byte(resp))
 				}
 				continue
 			}
@@ -190,7 +304,6 @@ func main() {
 				resp := node.HandleRequestVote(m)
 				_ = raftSendFunc(fromAddr, resp)
 			case codec.RequestVoteResponse:
-				// Find peer ID by address for the response handler
 				peerID := node.FindPeerIDByAddr(fromAddr)
 				node.HandleRequestVoteResponse(peerID, m)
 			case codec.AppendEntries:

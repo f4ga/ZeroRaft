@@ -83,32 +83,41 @@ jobs:
         run: docker compose build
       - name: Start cluster
         run: docker compose up -d
-      - name: Wait for cluster to be healthy
+      - name: Wait for cluster to be ready
         run: |
+          # Wait for nodes to start and elect a leader
           for i in $(seq 1 30); do
-            HEALTHY=0
-            for node in node1 node2 node3; do
-              if docker compose exec -T "$node" /usr/local/bin/zeroraft --health 2>/dev/null; then
-                HEALTHY=$((HEALTHY + 1))
-              fi
-            done
-            if [ "$HEALTHY" -eq 3 ]; then
-              echo "All 3 nodes healthy"
+            # Use client containers to check leader status
+            LEADER=$(docker run --rm --network zeroraft_zeroraft-net \
+              zeroraft:latest --cli --addr=node1:9000 2>/dev/null <<< $'/leader\n/exit' | grep "Leader:" || echo "")
+            if [ -n "$LEADER" ]; then
+              echo "Leader elected: $LEADER"
               break
             fi
-            echo "Attempt $i: $HEALTHY/3 nodes healthy"
+            echo "Attempt $i: waiting for leader election..."
             sleep 1
           done
-      - name: Send command and verify replication
+      - name: Send /set command via client container
         run: |
-          # Send /set command to node1 via stdin
-          echo -e '/set smoke hello\n/exit' | docker compose exec -T node1 /usr/local/bin/zeroraft --id=1 --addr=node1:9000 --peers=node2:9000,node3:9000 --data-dir=/data 2>/dev/null || true
-          # Wait for replication
-          sleep 3
-          # Verify on node2
-          echo -e '/get smoke\n/exit' | docker compose exec -T node2 /usr/local/bin/zeroraft --id=2 --addr=node2:9000 --peers=node1:9000,node3:9000 --data-dir=/data 2>/dev/null | grep -q "hello" && echo "node2: OK" || echo "node2: FAIL"
-          # Verify on node3
-          echo -e '/get smoke\n/exit' | docker compose exec -T node3 /usr/local/bin/zeroraft --id=3 --addr=node3:9000 --peers=node1:9000,node2:9000 --data-dir=/data 2>/dev/null | grep -q "hello" && echo "node3: OK" || echo "node3: FAIL"
+          echo "Sending /set smoke hello to node1..."
+          docker run --rm --network zeroraft_zeroraft-net \
+            zeroraft:latest --cli --addr=node1:9000 <<< $'/set smoke hello\n/exit'
+      - name: Wait for replication
+        run: sleep 3
+      - name: Verify on node2
+        run: |
+          echo "Verifying on node2..."
+          RESULT=$(docker run --rm --network zeroraft_zeroraft-net \
+            zeroraft:latest --cli --addr=node2:9000 <<< $'/get smoke\n/exit')
+          echo "$RESULT"
+          echo "$RESULT" | grep -q "hello" && echo "node2: OK" || (echo "node2: FAIL" && exit 1)
+      - name: Verify on node3
+        run: |
+          echo "Verifying on node3..."
+          RESULT=$(docker run --rm --network zeroraft_zeroraft-net \
+            zeroraft:latest --cli --addr=node3:9000 <<< $'/get smoke\n/exit')
+          echo "$RESULT"
+          echo "$RESULT" | grep -q "hello" && echo "node3: OK" || (echo "node3: FAIL" && exit 1)
       - name: Shutdown
         if: always()
         run: docker compose down
