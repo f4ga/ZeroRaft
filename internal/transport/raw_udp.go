@@ -15,6 +15,7 @@ package transport
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"syscall"
@@ -77,6 +78,18 @@ func NewRawSocket(addr string) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("socket creation failed: %v", err)
 	}
+
+	// Set receive buffer size to 4 MB to reduce packet drops under load.
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 4<<20); err != nil {
+		// Non-critical: log but continue with default buffer size.
+		log.Printf("warning: failed to set SO_RCVBUF: %v", err)
+	}
+	// Set send buffer size to 4 MB for the same reason.
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_SNDBUF, 4<<20); err != nil {
+		// Non-critical: log but continue with default buffer size.
+		log.Printf("warning: failed to set SO_SNDBUF: %v", err)
+	}
+
 	var addr4 [4]byte
 	copy(addr4[:], ip4)
 	sockaddr := &syscall.SockaddrInet4{

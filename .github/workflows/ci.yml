@@ -97,27 +97,53 @@ jobs:
             echo "Attempt $i: waiting for leader election..."
             sleep 1
           done
-      - name: Send /set command via client container
+      - name: Send /set command and verify replication with retry loop
         run: |
           echo "Sending /set smoke hello to node1..."
           docker run --rm --network zeroraft_zeroraft-net \
             zeroraft:latest --cli --addr=node1:9000 <<< $'/set smoke hello\n/exit'
-      - name: Wait for replication
-        run: sleep 3
-      - name: Verify on node2
-        run: |
-          echo "Verifying on node2..."
-          RESULT=$(docker run --rm --network zeroraft_zeroraft-net \
+
+          # Wait for replication on node2 (retry up to 10 times)
+          echo "Waiting for replication to node2..."
+          for i in $(seq 1 10); do
+            RESULT=$(docker run --rm --network zeroraft_zeroraft-net \
+              zeroraft:latest --cli --addr=node2:9000 <<< $'/get smoke\n/exit')
+            if echo "$RESULT" | grep -q "hello"; then
+              echo "node2: OK (attempt $i)"
+              break
+            fi
+            echo "Retry $i/10: value not yet replicated to node2"
+            sleep 1
+          done
+
+          # Wait for replication on node3 (retry up to 10 times)
+          echo "Waiting for replication to node3..."
+          for i in $(seq 1 10); do
+            RESULT=$(docker run --rm --network zeroraft_zeroraft-net \
+              zeroraft:latest --cli --addr=node3:9000 <<< $'/get smoke\n/exit')
+            if echo "$RESULT" | grep -q "hello"; then
+              echo "node3: OK (attempt $i)"
+              break
+            fi
+            echo "Retry $i/10: value not yet replicated to node3"
+            sleep 1
+          done
+
+          # Final check – fail if value is missing on either node
+          echo "Performing final verification..."
+          FINAL_NODE2=$(docker run --rm --network zeroraft_zeroraft-net \
             zeroraft:latest --cli --addr=node2:9000 <<< $'/get smoke\n/exit')
-          echo "$RESULT"
-          echo "$RESULT" | grep -q "hello" && echo "node2: OK" || (echo "node2: FAIL" && exit 1)
-      - name: Verify on node3
-        run: |
-          echo "Verifying on node3..."
-          RESULT=$(docker run --rm --network zeroraft_zeroraft-net \
+          if ! echo "$FINAL_NODE2" | grep -q "hello"; then
+            echo "FAIL: value not replicated to node2 after 10 attempts"
+            exit 1
+          fi
+          FINAL_NODE3=$(docker run --rm --network zeroraft_zeroraft-net \
             zeroraft:latest --cli --addr=node3:9000 <<< $'/get smoke\n/exit')
-          echo "$RESULT"
-          echo "$RESULT" | grep -q "hello" && echo "node3: OK" || (echo "node3: FAIL" && exit 1)
+          if ! echo "$FINAL_NODE3" | grep -q "hello"; then
+            echo "FAIL: value not replicated to node3 after 10 attempts"
+            exit 1
+          fi
+          echo "All nodes have the value. Smoke test passed."
       - name: Shutdown
         if: always()
         run: docker compose down

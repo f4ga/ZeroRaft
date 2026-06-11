@@ -23,6 +23,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /zeroraft ./cmd/zeroraft
 # Финальный образ
 FROM alpine:latest
 COPY --from=builder /zeroraft /usr/local/bin/zeroraft
-HEALTHCHECK --interval=5s --timeout=2s --start-period=3s --retries=3 \
+HEALTHCHECK --interval=5s --timeout=2s --start-period=15s --retries=3 \
     CMD ["/usr/local/bin/zeroraft", "--health"]
 ENTRYPOINT ["/usr/local/bin/zeroraft"]

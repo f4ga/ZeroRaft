@@ -5,6 +5,7 @@
   <a href="https://github.com/f4ga/ZeroRaft/actions/workflows/ci.yml"><img src="https://github.com/f4ga/ZeroRaft/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://goreportcard.com/report/github.com/f4ga/ZeroRaft"><img src="https://goreportcard.com/badge/github.com/f4ga/ZeroRaft" alt="Go Report Card"></a>
   <img src="https://img.shields.io/badge/coverage-77%25-brightgreen" alt="Coverage">
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/release-v0.1.0-blue" alt="Release"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go" alt="Go Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
 
@@ -25,6 +26,7 @@
 | [Codec Benchmarks](#codec-benchmarks) | JSON vs Protobuf performance on real hardware |
 | [Project Structure](#project-structure) | Directory layout |
 | [How Raft Works](#how-raft-works) | Election, replication, conflict resolution |
+| [Changelog](#changelog) | Release history |
 | [What's Missing](#whats-missing) | Known gaps and simplifications |
 | [License](#license) | Apache 2.0 |
 
@@ -203,21 +205,21 @@ Current total: **77%** ✅
 
 ## Codec Benchmarks
 
-Hardware: **12th Gen Intel(R) Core(TM) i3-1215U (8 cores)**  
+Hardware: **12th Gen Intel(R) Core(TM) i3-1215U (8 cores)**
 Command: `go test -bench=. -benchmem ./internal/codec/`
 
 | Benchmark | Time (ns/op) | Bytes/op | Allocs/op |
 |-----------|--------------|----------|------------|
-| **JSONEncode** | 273 | 240 | 3 |
-| **ProtobufEncode** | 208 | 200 | 4 |
-| **JSONDecode** | 4813 | 896 | 22 |
-| **ProtobufDecode** | 1184 | 872 | 20 |
-| **JSONSize** (encode only) | 566 | 496 | 3 |
-| **ProtobufSize** | 528 | 528 | 7 |
+| **JSONEncode** | 255 | 240 | 3 |
+| **ProtobufEncode** | 199 | 200 | 4 |
+| **JSONDecode** | 4402 | 896 | 22 |
+| **ProtobufDecode** | 1097 | 872 | 20 |
+| **JSONSize** (encode only) | 570 | 496 | 3 |
+| **ProtobufSize** | 457 | 528 | 7 |
 
-**Conclusion:**  
-- Protobuf decoding is **~4× faster** than JSON.  
-- Protobuf encoding is **~1.3× faster**.  
+**Conclusion:**
+- Protobuf decoding is **~4× faster** than JSON.
+- Protobuf encoding is **~1.3× faster**.
 - Both codecs are included; you can switch with `codec.NewCodec(codec.CodecTypeProtobuf)`.
 
 To run only codec benchmarks yourself:
@@ -226,6 +228,14 @@ To run only codec benchmarks yourself:
 go test -bench=BenchmarkJSONEncode -benchmem ./internal/codec/
 go test -bench=BenchmarkProtobufDecode -benchmem ./internal/codec/
 ```
+
+### Network Throughput (planned for v0.2.0)
+
+```bash
+./scripts/bench.sh raw
+```
+
+> Note: The net.UDPConn comparison is not yet implemented.
 
 ---
 
@@ -273,6 +283,12 @@ All this is exercised by the integration tests and works over real UDP sockets.
 | Membership changes (BS‑03) | ⏳ | Planned |
 | TLS for client communication | ⏳ | Planned |
 | TUI dashboard (BS‑06) | ⏳ | Planned |
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ---
 

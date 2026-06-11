@@ -18,6 +18,12 @@ services:
     build: .
     image: zeroraft:latest
     command: [ "--id", "1", "--addr", "0.0.0.0:9000", "--peers", "2=node2:9000,3=node3:9000" ]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/zeroraft", "--health"]
+      interval: 5s
+      timeout: 2s
+      start_period: 15s
+      retries: 3
     networks:
       - zeroraft-net
     restart: unless-stopped
@@ -26,6 +32,12 @@ services:
     build: .
     image: zeroraft:latest
     command: [ "--id", "2", "--addr", "0.0.0.0:9000", "--peers", "1=node1:9000,3=node3:9000" ]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/zeroraft", "--health"]
+      interval: 5s
+      timeout: 2s
+      start_period: 15s
+      retries: 3
     networks:
       - zeroraft-net
     restart: unless-stopped
@@ -34,6 +46,12 @@ services:
     build: .
     image: zeroraft:latest
     command: [ "--id", "3", "--addr", "0.0.0.0:9000", "--peers", "1=node1:9000,2=node2:9000" ]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/zeroraft", "--health"]
+      interval: 5s
+      timeout: 2s
+      start_period: 15s
+      retries: 3
     networks:
       - zeroraft-net
     restart: unless-stopped
